@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>PhotoCove — 本地摄影作品展示站</title>
+<link rel="stylesheet" href="assets/css/style.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='5' width='20' height='15' rx='2' fill='%23e8b04b'/%3E%3Ccircle cx='12' cy='12.5' r='4.5' fill='%231a1d21'/%3E%3C/svg%3E">
+</head>
+<body>
+
+<!-- 浏览器兼容提示条 -->
+<div id="compat-banner" class="banner banner-warn hidden">
+  检测到当前浏览器不支持文件系统访问 API，请使用 <b>Microsoft Edge</b> 或 <b>Chrome</b> 打开本页面。
+</div>
+
+<header class="topbar">
+  <div class="topbar-brand">
+    <svg viewBox="0 0 24 24" width="22" height="22"><rect x="2" y="5" width="20" height="15" rx="2" fill="var(--accent)"/><circle cx="12" cy="12.5" r="4.5" fill="var(--bg)"/></svg>
+    <span>PhotoCove</span>
+  </div>
+  <nav class="topnav">
+    <button class="nav-btn active" data-view="portfolio">作品集</button>
+    <button class="nav-btn" data-view="timeline">时间轴</button>
+    <button class="nav-btn" data-view="albums">相册集</button>
+    <button class="nav-btn" data-view="settings">设置</button>
+  </nav>
+  <div class="topbar-status">
+    <span id="scan-status" class="scan-status"></span>
+  </div>
+</header>
+
+<!-- 授权恢复提示条：吸顶显示，滚到哪都看得到 -->
+<div id="perm-banner" class="banner banner-info banner-sticky hidden">
+  <span>图片库需要重新授权才能读取照片</span>
+  <button id="perm-grant" class="btn btn-small">允许访问</button>
+</div>
+
+<!-- 筛选栏（仅作品集/时间轴显示） -->
+<div id="filter-bar" class="filter-bar">
+  <select id="filter-year" class="filter-select"><option value="">全部年份</option></select>
+  <select id="filter-camera" class="filter-select"><option value="">全部器材</option></select>
+  <select id="filter-album" class="filter-select"><option value="">全部相册</option></select>
+  <span id="filter-count" class="filter-count"></span>
+</div>
+
+<main id="main">
+  <!-- 作品集：瀑布流 -->
+  <section id="view-portfolio" class="view">
+    <div id="portfolio-grid" class="masonry"></div>
+    <div id="portfolio-empty" class="empty-state hidden">
+      <p>还没有照片。</p>
+      <p>到 <a href="#" data-goto="settings">设置</a> 里添加图片库目录，然后点该目录的「扫描」。</p>
+    </div>
+  </section>
+
+  <!-- 时间轴 -->
+  <section id="view-timeline" class="view hidden">
+    <div id="timeline"></div>
+    <div id="timeline-empty" class="empty-state hidden"><p>暂无照片。</p></div>
+  </section>
+
+  <!-- 相册集 -->
+  <section id="view-albums" class="view hidden">
+    <div id="albums-grid" class="albums-grid"></div>
+    <div id="album-detail" class="hidden">
+      <button id="album-back" class="btn btn-small">← 返回相册列表</button>
+      <h2 id="album-title" class="album-title"></h2>
+      <div id="album-grid" class="masonry"></div>
+    </div>
+    <div id="albums-empty" class="empty-state hidden"><p>暂无照片。</p></div>
+  </section>
+
+  <!-- 设置 -->
+  <section id="view-settings" class="view hidden">
+    <div class="settings-wrap">
+      <!-- 图片库 -->
+      <div class="settings-card">
+        <h3>图片库目录</h3>
+        <p class="settings-hint">支持添加多个目录，原图保留在原位置。子文件夹会自动识别为相册。</p>
+
+        <!-- 授权状态常驻显示：浏览器每次会话都可能收回读权限，入口要一直在，不能只靠顶部横幅 -->
+        <div id="dir-perm-bar" class="dir-perm-bar">
+          <span id="dir-perm-text" class="dir-perm-text">正在检查目录授权…</span>
+          <button id="perm-recheck" class="btn btn-small btn-ghost">重新检查</button>
+          <button id="grant-all" class="btn btn-small hidden">授权全部目录</button>
+        </div>
+
+        <ul id="dir-list" class="dir-list"></ul>
+        <button id="add-dir" class="btn">＋ 添加图片库目录</button>
+      </div>
+
+      <!-- RAW -->
+      <div class="settings-card">
+        <h3>RAW 支持</h3>
+        <div class="settings-row">
+          <span>启用 RAW 预览提取<span class="settings-sub">开启后新扫描的 RAW 文件会提取内嵌 JPEG 预览；已扫描过的 RAW 需点击下方重建</span></span>
+          <label class="switch"><input type="checkbox" id="raw-toggle"><span class="slider"></span></label>
+        </div>
+        <button id="rescan-raw" class="btn btn-small hidden">重建 RAW 索引</button>
+      </div>
+
+      <!-- 外观 -->
+      <div class="settings-card">
+        <h3>外观</h3>
+        <div class="settings-row">
+          <span>主题</span>
+          <div class="seg-group" id="theme-group">
+            <button class="seg-btn" data-theme="dark">暗色（默认）</button>
+            <button class="seg-btn" data-theme="light">亮色</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 维护 -->
+      <div class="settings-card">
+        <h3>维护</h3>
+        <div class="settings-row">
+          <span>立即全量检查更新<span class="settings-sub">打开页面不会自动扫描；需要更新时点各目录的「扫描」，或在这里全量检查</span></span>
+          <button id="rescan-all" class="btn btn-small">重新扫描</button>
+        </div>
+        <div class="settings-row">
+          <span>清空本地索引<span class="settings-sub">删除所有缩略图和记录，不影响原图</span></span>
+          <button id="clear-db" class="btn btn-small btn-danger">清空</button>
+        </div>
+        <div class="settings-row">
+          <span>存储状态<span class="settings-sub">本站缓存的缩略图与预览图占用的空间，原图不计入</span></span>
+          <div id="storage-info" class="diag-info">检查中…</div>
+        </div>
+        <p class="settings-hint">程序版本 v12。若界面行为与说明不符（常见于浏览器缓存了旧脚本），按 <b>Ctrl + F5</b> 强制刷新一次。</p>
+      </div>
+
+      <!-- 使用须知 -->
+      <details class="notice">
+        <summary>使用须知（限制条件）</summary>
+        <ul>
+          <li><b>浏览器要求</b>：仅支持 Edge / Chrome（需要文件系统访问 API），其他浏览器无法添加图片库。</li>
+          <li><b>访问授权</b>：浏览器不把这类权限长期保存，<b>完全退出浏览器</b>后再打开需要重新授权；按 F5 刷新页面<b>不会</b>重置权限，也不需要重新授权。授权入口有两处：设置页「图片库目录」上方的「授权全部目录」或每个目录右侧的「授权」按钮；未授权时页面顶部还会出现蓝色吸顶横幅，设置标签上有黄点提示。任何时候想确认当前状态，点授权条上的「重新检查」。想省掉这一步：在 Edge/Chrome 菜单里把本站安装为应用，安装后权限会被记住，双击图标即可直接使用。</li>
+          <li><b>数据存储</b>：缩略图和索引保存在本浏览器的本地数据库中，原图始终留在原目录，不会被移动或修改。</li>
+          <li><b>RAW 支持</b>：默认关闭。RAW 文件（CR2/CR3/ARW/NEF/ORF/DNG 等）开启支持后，通过提取相机内嵌的 JPEG 预览图展示，不解码原始传感器数据。</li>
+          <li><b>迁移</b>：整个文件夹拷贝即可部署到其他电脑；但浏览器本地索引不随文件夹迁移，新机器上首次打开会重新扫描。</li>
+        </ul>
+      </details>
+    </div>
+  </section>
+</main>
+
+<!-- 全局提示条（toast） -->
+<div id="toast" class="toast hidden"></div>
+
+<!-- 扫描进度浮卡（右下角，跨视图常驻） -->
+<div id="scan-widget" class="scan-widget hidden">
+  <div class="sw-head">
+    <span class="sw-spinner"></span>
+    <span id="sw-title">正在扫描</span>
+    <button id="sw-cancel" class="sw-cancel">取消</button>
+  </div>
+  <div id="sw-dir" class="sw-dir"></div>
+  <div class="sw-bar"><div id="sw-fill" class="sw-fill"></div></div>
+  <div id="sw-detail" class="sw-detail"></div>
+</div>
+
+<!-- Lightbox -->
+<div id="lightbox" class="lightbox hidden">
+  <button class="lb-close" id="lb-close" title="关闭 (Esc)">×</button>
+  <button class="lb-nav lb-prev" id="lb-prev" title="上一张 (←)">‹</button>
+  <div class="lb-stage">
+    <img id="lb-img" alt="">
+    <div class="lb-spinner hidden" id="lb-spinner"></div>
+  </div>
+  <button class="lb-nav lb-next" id="lb-next" title="下一张 (→)">›</button>
+  <div class="lb-info" id="lb-info"></div>
+  <div class="lb-strip" id="lb-strip"></div>
+</div>
+
+<!-- 确认对话框 -->
+<div id="confirm-overlay" class="confirm-overlay hidden">
+  <div class="confirm-box" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-msg">
+    <h3 id="confirm-title">确认操作</h3>
+    <p id="confirm-msg"></p>
+    <div class="confirm-actions">
+      <button id="confirm-cancel" class="btn btn-ghost" type="button">取消</button>
+      <button id="confirm-ok" class="btn btn-danger" type="button">确定</button>
+    </div>
+  </div>
+</div>
+
+<!-- 依赖与脚本（经典脚本，file:// 下可用） -->
+<script src="assets/vendor/exifr.full.js"></script>
+<script src="js/store.js"></script>
+<script src="js/raw.js"></script>
+<script src="js/exif.js"></script>
+<script src="js/scanner.js"></script>
+<script src="js/views.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
