@@ -350,7 +350,11 @@ a { color: var(--accent); }
   display: flex; align-items: center; justify-content: center;
 }
 .lb-stage { max-width: calc(100vw - 160px); max-height: calc(100vh - 130px); display: flex; align-items: center; justify-content: center; }
-.lb-stage img { max-width: 100%; max-height: calc(100vh - 130px); object-fit: contain; user-select: none; }
+/* 点击图片进入全屏，故用放大镜光标提示 */
+.lb-stage img { max-width: 100%; max-height: calc(100vh - 130px); object-fit: contain; user-select: none; cursor: zoom-in; }
+.lightbox:fullscreen { background: #08090b; }
+.lightbox:fullscreen .lb-stage { max-width: calc(100vw - 120px); max-height: calc(100vh - 70px); }
+.lightbox:fullscreen .lb-stage img { max-height: calc(100vh - 70px); cursor: zoom-out; }
 .lb-spinner {
   position: absolute; width: 42px; height: 42px;
   border: 3px solid rgba(255,255,255,.15); border-top-color: var(--accent);
@@ -399,3 +403,88 @@ a { color: var(--accent); }
   .lb-info { bottom: 70px; font-size: 11px; }
   .view { padding: 14px 12px 60px; }
 }
+
+/* ============ 地图视图 ============ */
+/* 高度扣掉吸顶导航(54px)与筛选栏，避免地图把页面撑出滚动条。
+ * z-index:0 让本区块形成独立层叠上下文：Leaflet 内部 z-index 最高到 1000，
+ * 若不隔离会盖住全局 Lightbox / toast 等浮层。 */
+#view-map { padding: 0; height: calc(100vh - 100px); min-height: 340px; position: relative; z-index: 0; }
+#view-map .map-container {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  background: var(--img-bg);
+}
+/* 无点位时只盖一张提示卡片，底图仍可见，避免看起来像"地图没加载" */
+#view-map .empty-state {
+  position: absolute; inset: 0; z-index: 1000; padding: 20px;
+  display: flex; align-items: center; justify-content: center;
+  background: transparent; pointer-events: none;
+}
+.map-empty-card {
+  max-width: 430px; padding: 16px 22px; text-align: center; line-height: 1.9;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 4px 18px rgba(0,0,0,.35);
+}
+.map-empty-card p { margin: 0; }
+.map-empty-card p + p { margin-top: 4px; font-size: 12.5px; color: var(--text-dim); }
+
+.map-stats {
+  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
+  z-index: 900; pointer-events: none;
+  padding: 5px 14px; border-radius: 20px;
+  background: rgba(20, 22, 26, .82); color: #e6e8ea;
+  font-size: 12px; letter-spacing: .2px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.28);
+  backdrop-filter: blur(6px);
+}
+.map-stats b { color: var(--accent); }
+
+/* 点位：强调色圆点 + 白描边，hover 放大 */
+.map-marker {
+  width: 20px; height: 20px; margin: 1px;
+  background: var(--accent); border: 2px solid #fff; border-radius: 50%;
+  box-shadow: 0 2px 6px rgba(0,0,0,.45);
+  transition: transform .15s;
+}
+.map-marker:hover { transform: scale(1.3); }
+
+/* 聚合气泡：覆盖插件默认绿色样式，统一成强调色 */
+.marker-cluster { background: none; }
+.marker-cluster div {
+  width: 100% !important; height: 100% !important; margin: 0 !important;
+  background: var(--accent) !important; color: #1a1d21;
+  font: 700 12px/1 "Segoe UI", "Microsoft YaHei", sans-serif;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; box-shadow: 0 2px 8px rgba(0,0,0,.4);
+  opacity: .92;
+}
+.marker-cluster-small  { width: 34px !important; height: 34px !important; }
+.marker-cluster-medium { width: 44px !important; height: 44px !important; }
+.marker-cluster-large  { width: 56px !important; height: 56px !important; }
+
+/* 悬停提示（替代原来需要再点一次的 Popup） */
+.leaflet-tooltip.map-tip {
+  background: var(--bg-card); color: var(--text);
+  border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 14px rgba(0,0,0,.35);
+  padding: 8px 11px;
+}
+.leaflet-tooltip.map-tip::before {
+  border-top-color: var(--border);
+}
+
+/* 信息文本（悬停提示内） */
+.map-popup { font-size: 12.5px; line-height: 1.6; }
+.map-popup h4 { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }
+.map-popup-coord { color: var(--text-dim); font-size: 11.5px; margin-top: 4px; }
+
+/* 缩放控件与版权条 */
+.leaflet-control-zoom a {
+  background: var(--bg-card) !important; color: var(--text) !important;
+  border-color: var(--border) !important;
+}
+.leaflet-control-zoom a:hover { background: var(--bg-elev) !important; }
+.leaflet-control-attribution {
+  background: rgba(0,0,0,.45) !important; color: #b9bec5 !important;
+  font-size: 10px !important; padding: 2px 6px !important;
+}
+.leaflet-control-attribution a { color: var(--accent) !important; }

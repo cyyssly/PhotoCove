@@ -14,7 +14,7 @@ const SCAN = (() => {
   const THUMB_QUAL = 0.8;
   const PREVIEW_QUAL = 0.86;
   const PREVIEW_MIN_LONG = 1280;  // 预览长边下限（低分屏也不至于生成过小的图）
-  const PREVIEW_MAX_LONG = 4096;  // 预览长边上限（4K/多倍屏兜底）
+  const PREVIEW_HARD_LONG = 6144; // 安全阀：8K 级屏幕也不生成超大图，避免解码/编码与内存失控
   const LAZY_CONCURRENCY = 3;     // 同时解码的图片数
   const MEM_MAX = 400;            // 内存里最多留多少张的 Blob
 
@@ -60,8 +60,10 @@ const SCAN = (() => {
   function clearStorageError() { _storageError = null; }
 
   /* ---- 预览目标尺寸：按当前屏幕的物理分辨率决定 ----
-   * 逻辑：长边超过屏幕长边的照片才需要降采样预览；不超过的一律直接显示原图。
-   * 屏幕分辨率 = screen 的 CSS 像素 × devicePixelRatio（即实际物理像素）。 */
+   * 逻辑：长边超过屏幕物理长边的照片才需要降采样预览；不超过的直接显示原图。
+   * 屏幕物理长边 = screen 的 CSS 像素 × devicePixelRatio。
+   * 预览长边上限不再固定为 4096，而是直接跟随屏幕（例如 3440×1440 屏幕 → 3440），
+   * 既保证全屏 1:1 清晰，又不为用不到的像素多付出一次大图解码。 */
   let _previewLong = 0;
   function previewTargetLong() {
     if (_previewLong) return _previewLong;
@@ -69,8 +71,8 @@ const SCAN = (() => {
       const dpr = Math.min(Math.max(window.devicePixelRatio || 1, 1), 3);
       const scr = window.screen || {};
       const sw = scr.width || 1920, sh = scr.height || 1080;
-      const raw = Math.round(Math.max(sw, sh) * dpr);
-      _previewLong = Math.max(PREVIEW_MIN_LONG, Math.min(raw, PREVIEW_MAX_LONG));
+      const screenLong = Math.round(Math.max(sw, sh) * dpr);   // 屏幕物理长边
+      _previewLong = Math.min(Math.max(screenLong, PREVIEW_MIN_LONG), PREVIEW_HARD_LONG);
     } catch (e) {
       _previewLong = 1920;
     }
@@ -228,6 +230,7 @@ const SCAN = (() => {
       Object.assign(rec, {
         make: meta.make, model: meta.model, lens: meta.lens,
         focal: meta.focal, fnum: meta.fnum, exposure: meta.exposure, iso: meta.iso,
+        gps: meta.gps || null,   // 经纬度，供地图视图点亮使用
       });
       if (!rec.width && meta.width) { rec.width = meta.width; rec.height = meta.height; }
       if (meta.date) {

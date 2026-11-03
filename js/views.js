@@ -74,12 +74,17 @@ const VIEWS = (() => {
   /* ---------- 渲染 ---------- */
   function render() {
     $('#filter-bar').classList.toggle('hidden', state.view === 'settings');
-    ['portfolio', 'timeline', 'albums', 'settings'].forEach(v =>
+    ['portfolio', 'timeline', 'albums', 'map', 'settings'].forEach(v =>
       $('#view-' + v).classList.toggle('hidden', v !== state.view));
     revokeUrls();
     if (state.view === 'portfolio') renderPortfolio();
     else if (state.view === 'timeline') renderTimeline();
     else if (state.view === 'albums') state.album ? renderAlbumDetail() : renderAlbums();
+    else if (state.view === 'map') {
+      if (typeof MAPVIEW !== 'undefined') MAPVIEW.show();
+    } else if (typeof MAPVIEW !== 'undefined') {
+      MAPVIEW.hide();
+    }
   }
 
   /* 图片/占位：有缩略图立即显示，没有则占位并在进入视口时按需生成
@@ -185,6 +190,17 @@ const VIEWS = (() => {
     d.textContent = p.date ? fmtDate(p.date) : p.name;
     el.appendChild(d);
     el.addEventListener('click', () => onClick(p));
+    // 悬停 220ms 后预取大图预览：光标停留多半意味着要打开这张，提前解码省掉等待
+    let hoverTimer = null;
+    el.addEventListener('mouseenter', () => {
+      hoverTimer = setTimeout(() => {
+        hoverTimer = null;
+        try { SCAN.ensureAssets(p, 'preview').catch(() => {}); } catch (e) { /* 忽略 */ }
+      }, 220);
+    });
+    el.addEventListener('mouseleave', () => {
+      if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null; }
+    });
     return el;
   }
 
@@ -458,6 +474,22 @@ const VIEWS = (() => {
   }
 
   /* ---------- Lightbox ---------- */
+  /* 大图专用 URL 缓存：同一个 Blob 只创建一次 blob URL，
+   * 否则每次切换都新建 URL，浏览器会把它当成新资源、重新解码一遍大图。 */
+  const _lbUrls = new Map();   // 'id|kind' -> objectURL
+  function lbUrl(blob, key) {
+    if (!blob) return null;
+    let u = _lbUrls.get(key);
+    if (u) return u;
+    u = URL.createObjectURL(blob);
+    _lbUrls.set(key, u);
+    return u;
+  }
+  function releaseLbUrls() {
+    _lbUrls.forEach(u => URL.revokeObjectURL(u));
+    _lbUrls.clear();
+  }
+
   function openLightboxFrom(list, p) {
     return () => {
       const i = list.indexOf(p);
@@ -466,6 +498,14 @@ const VIEWS = (() => {
       state.lbIndex = i;
       showLb();
     };
+  }
+
+  /* 供其他视图（地图）直接打开：指定列表与下标 */
+  function openLightbox(list, index) {
+    if (!list || !list.length) return;
+    state.lbList = list;
+    state.lbIndex = Math.max(0, Math.min(index || 0, list.length - 1));
+    showLb();
   }
 
   function showLb() {
@@ -484,8 +524,7 @@ const VIEWS = (() => {
     // 先显示已缓存的缩略图（如有），避免空白
     const thumbBlob = SCAN.thumbSync(p);
     if (thumbBlob) {
-      img.src = URL.createObjectURL(thumbBlob);
-      _urls.push(img.src);
+      img.src = lbUrl(thumbBlob, p.id + '|thumb');
       img.style.visibility = 'visible';
       spinner.classList.add('hidden');
     } else {
@@ -498,8 +537,11 @@ const VIEWS = (() => {
     if (token !== _lbToken) return; // 已切到别的照片
 
     let url = null;
+    let cached = false;
     if (assets && assets.preview) {
-      url = URL.createObjectURL(assets.preview);
+      // 同一张照片重复打开时复用同一个 blob URL，浏览器可直接命中解码缓存
+      url = lbUrl(assets.preview, p.id + '|preview');
+      cached = true;
     } else if (!p.isRaw || (assets && assets.useOriginal)) {
       // useOriginal，或解码失败（assets 为 null）时退回原图一试
       url = await SCAN.originalUrl(p).catch(() => null);
@@ -507,7 +549,7 @@ const VIEWS = (() => {
     }
 
     if (url) {
-      _urls.push(url);
+      if (!cached) _urls.push(url);
       const tmp = new Image();
       tmp.onload = () => {
         if (token !== _lbToken) return;
@@ -542,6 +584,33 @@ const VIEWS = (() => {
     $('#lb-info').innerHTML = parts.filter(Boolean).join('<span class="exif-dim"> ｜ </span>');
 
     renderStrip();
+
+    // 预取左右相邻各一张的预览：浏览器空闲时生成，
+    // 之后按 ← / → 或滚轮切换就能直接命中内存缓存，不用再等解码。
+    prefetchNeighbors();
+  }
+
+  let _prefetchToken = 0;
+  function prefetchNeighbors() {
+    const list = state.lbList;
+    const n = list.length;
+    if (n < 2) return;
+    const cur = list[state.lbIndex];
+    const targets = [
+      list[(state.lbIndex + 1) % n],
+      list[(state.lbIndex - 1 + n) % n],
+    ].filter(q => q && q !== cur);
+    if (!targets.length) return;
+
+    const token = ++_prefetchToken;
+    const run = () => {
+      if (token !== _prefetchToken) return;   // 已经切到别处，放弃这次预取
+      targets.forEach(q => {
+        try { SCAN.ensureAssets(q, 'preview').catch(() => {}); } catch (e) { /* 忽略 */ }
+      });
+    };
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 2000 });
+    else setTimeout(run, 300);
   }
 
   function renderStrip() {
@@ -556,9 +625,7 @@ const VIEWS = (() => {
       let t;
       if (qb) {
         t = document.createElement('img');
-        const u = URL.createObjectURL(qb);
-        _urls.push(u);
-        t.src = u;
+        t.src = lbUrl(qb, q.id + '|thumb');
       } else {
         t = document.createElement('div');
         t.className = 'strip-ph';
@@ -576,7 +643,23 @@ const VIEWS = (() => {
     state.lbIndex = (state.lbIndex + d + n) % n;
     renderLb();
   }
-  function closeLb() { $('#lightbox').classList.add('hidden'); _lbToken++; }
+  /* 全屏浏览：点击图片进入浏览器全屏，再次点击退出 */
+  function toggleLbFullscreen() {
+    const lb = $('#lightbox');
+    if (document.fullscreenElement) {
+      if (document.exitFullscreen) document.exitFullscreen().catch(() => {});
+      return;
+    }
+    if (lb.requestFullscreen) lb.requestFullscreen().catch(() => {});
+  }
+
+  function closeLb() {
+    if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(() => {});
+    $('#lightbox').classList.add('hidden');
+    $('#lb-img').removeAttribute('src');
+    releaseLbUrls();
+    _lbToken++;
+  }
 
   function revokeUrls() {
     const olds = _urls.splice(0);
@@ -618,7 +701,22 @@ const VIEWS = (() => {
       if (Math.abs(dx) > 60) lbStep(dx > 0 ? -1 : 1);
       touchX = null;
     }, { passive: true });
-    $('#lightbox').addEventListener('click', e => { if (e.target.id === 'lightbox') closeLb(); });
+    // 滚轮切换：260ms 冷却，避免触控板一次滑动连翻好几张
+    let wheelLock = 0;
+    $('#lightbox').addEventListener('wheel', e => {
+      if ($('#lightbox').classList.contains('hidden')) return;
+      e.preventDefault();
+      const now = Date.now();
+      if (now - wheelLock < 260) return;
+      wheelLock = now;
+      lbStep(e.deltaY > 0 ? 1 : -1);
+    }, { passive: false });
+
+    // 点击图片区域进入/退出全屏；点击黑边关闭
+    $('#lightbox').addEventListener('click', e => {
+      if (e.target.id === 'lightbox') { closeLb(); return; }
+      if (e.target.closest('.lb-stage')) toggleLbFullscreen();
+    });
 
     // 窗口尺寸变化：重排已加载的瀑布流（只动已加载的节点，不重新分页）
     let rszTimer = null;
@@ -628,5 +726,5 @@ const VIEWS = (() => {
     });
   }
 
-  return { init, reload, render, state };
+  return { init, reload, render, state, openLightbox };
 })();

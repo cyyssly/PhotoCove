@@ -4,6 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>PhotoCove — 本地摄影作品展示站</title>
+<!-- 地图库（本地 vendor，避免 CDN 不可用时白屏）；须在 style.css 之前加载，便于主题覆盖 -->
+<link rel="stylesheet" href="assets/vendor/leaflet/leaflet.css">
+<link rel="stylesheet" href="assets/vendor/leaflet/MarkerCluster.css">
 <link rel="stylesheet" href="assets/css/style.css">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='5' width='20' height='15' rx='2' fill='%23e8b04b'/%3E%3Ccircle cx='12' cy='12.5' r='4.5' fill='%231a1d21'/%3E%3C/svg%3E">
 </head>
@@ -23,6 +26,7 @@
     <button class="nav-btn active" data-view="portfolio">作品集</button>
     <button class="nav-btn" data-view="timeline">时间轴</button>
     <button class="nav-btn" data-view="albums">相册集</button>
+    <button class="nav-btn" data-view="map">地图</button>
     <button class="nav-btn" data-view="settings">设置</button>
   </nav>
   <div class="topbar-status">
@@ -69,6 +73,18 @@
       <div id="album-grid" class="masonry"></div>
     </div>
     <div id="albums-empty" class="empty-state hidden"><p>暂无照片。</p></div>
+  </section>
+
+  <!-- 地图：点亮有 GPS 的照片 -->
+  <section id="view-map" class="view hidden">
+    <div id="map" class="map-container"></div>
+    <div id="map-stats" class="map-stats hidden"></div>
+    <div id="map-empty" class="empty-state hidden">
+      <div class="map-empty-card">
+        <p>当前筛选条件下没有带位置信息的照片。</p>
+        <p>老相机、网络下载或未开启定位的照片通常不含 GPS；重新扫描目录后新照片才会记录位置。</p>
+      </div>
+    </div>
   </section>
 
   <!-- 设置 -->
@@ -135,7 +151,7 @@
           <span>存储状态<span class="settings-sub">本站缓存的缩略图与预览图占用的空间，原图不计入</span></span>
           <div id="storage-info" class="diag-info">检查中…</div>
         </div>
-        <p class="settings-hint">程序版本 v12。若界面行为与说明不符（常见于浏览器缓存了旧脚本），按 <b>Ctrl + F5</b> 强制刷新一次。</p>
+        <p class="settings-hint">程序版本 v13。若界面行为与说明不符（常见于浏览器缓存了旧脚本），按 <b>Ctrl + F5</b> 强制刷新一次。</p>
       </div>
 
       <!-- 使用须知 -->
@@ -200,6 +216,9 @@
 <script src="js/exif.js"></script>
 <script src="js/scanner.js"></script>
 <script src="js/views.js"></script>
+<script src="assets/vendor/leaflet/leaflet.js"></script>
+<script src="assets/vendor/leaflet/leaflet.markercluster.js"></script>
+<script src="js/map-view.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
