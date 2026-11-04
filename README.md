@@ -6,6 +6,9 @@
 > v18 起**只保留桌面版**。原来的浏览器版本（File System Access API）已经移除：
 > 它拿不到绝对路径、解不开 HEIC、授权每次启动都会失效，而这些限制由浏览器沙箱决定、修不好。
 > 现在直接双击 `index.html` 会看到一句「请从桌面窗口启动」。
+>
+> v19 把补 GPS 收回应用内：地图选点 / 地名搜索 / 批量写入 EXIF 一体完成，
+> 不再需要在 PhotoCove 与 GPSStamp 之间来回切（GPSStamp 作为备用路径保留）。
 
 ## 启动
 
@@ -40,13 +43,20 @@ npm install          :: 只需一次
 | 地图 | 带 GPS 的照片点亮在地图上，密集处聚合为数字气泡；悬停看缩略图与坐标，点击打开照片 |
 | 设置 | 目录管理、RAW 开关、主题、维护与存储状态 |
 
-### 地图与 GPSStamp
+### 地图与补 GPS
 
 底图用**免 API Key 的 OSM 瓦片**，随项目本地存放（`assets/vendor/leaflet/`），多源自动降级：`tile.openstreetmap.de` → `tile.openstreetmap.org` → `OpenTopoMap`。三者都是 Web 墨卡托 / WGS84，与照片经纬度一致、无偏移。瓦片请求只发送瓦片坐标，不上传照片、文件名或经纬度。
 
-地图左下角的「N 张照片无位置信息」按文件夹聚合，点一行会直接启动同目录下的 **GPSStamp**，并带 `--missing-only`：只载入那个文件夹里缺 GPS 的照片，已有坐标的不会被覆盖。填一次坐标即可补齐。
+**补 GPS 在应用内完成**，不再需要外部工具：
 
-GPSStamp 是独立小工具，也可以单独使用，见 `GPSStamp\使用说明.txt`。
+- 地图页左下角「N 张照片无位置信息」按文件夹聚合，点一行就打开编辑器，只载入该文件夹里**缺 GPS** 的照片，已有坐标的不会被覆盖
+- 在图上点一下取坐标（标记可拖动微调），或搜地名——走 OpenStreetMap 的 Nominatim，返回 WGS-84，与照片坐标和底图同一坐标系，**不需要 GCJ-02/BD-09 那套纠偏**
+- 左侧可全选/单选，一次写入整个文件夹；大图页按 <kbd>G</kbd> 对单张标记，按 <kbd>R</kbd> 在资源管理器中显示
+- 写入前自动把原图备份到 `data\gps-backup\`（镜像原路径），出问题可以还原。**故意不用** exiftool 的 `_original` 同目录备份：那会在照片文件夹里多出 `xxx_original.jpg`，下次扫描当成新照片索引进来，作品集里凭空多一倍
+
+写入由主进程调用 exiftool（参数文件 + `-charset filename=utf8`，解决中文路径；`-m` 忽略损坏的 MakerNotes）。没装 exiftool 时编辑器会提示，点「指定 exiftool」选一次即可，之后记住；也会自动读取 `GPSStamp\settings.ini` 里已经记好的路径。
+
+`GPSStamp\` 仍随包提供，作为备用路径（行尾的 **↗** 按钮），对 RAW/HEIC 更稳，也可以单独使用，见 `GPSStamp\使用说明.txt`。
 
 ## 数据在哪
 
@@ -98,7 +108,7 @@ PhotoCove/
 ├── build/                  # 打包资源（icon.ico）
 ├── dist/                   # 打包产物（不进版本库）
 ├── electron/
-│   ├── main.js             # 窗口、app:// 与 covefile:// 协议、IPC、单实例
+│   ├── main.js             # 窗口、协议、IPC、exiftool 写入、地名查询
 │   ├── preload.js          # contextBridge 白名单，页面拿不到 Node
 │   └── selftest.renderer.js # --selftest 时在真实页面里跑的端到端自测
 ├── js/
@@ -109,6 +119,7 @@ PhotoCove/
 │   ├── scanner.js          # 目录枚举 + 增量比对 + 按需生成缩略图
 │   ├── views.js            # 作品集/时间轴/相册集/Lightbox/筛选
 │   ├── map-view.js         # 地图视图（Leaflet + 聚合，含无位置文件夹面板）
+│   ├── gps-editor.js       # GPS 编辑器：挑照片 → 地图/地名取点 → 写 EXIF
 │   └── app.js              # 启动、设置页、扫描编排
 ├── assets/
 │   ├── css/style.css

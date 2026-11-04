@@ -26,4 +26,15 @@ contextBridge.exposeInMainWorld('__COVE_DESKTOP', {
   readFile: (p) => ipcRenderer.invoke('cove:file', p),
   launchGpsStamp: (folder) => ipcRenderer.invoke('cove:gpsstamp', folder, true),
   reveal: (p) => ipcRenderer.invoke('cove:reveal', p),
+
+  /* GPS 编辑：写 EXIF 由主进程调 exiftool，页面碰不到 fs */
+  exiftool: () => ipcRenderer.invoke('cove:exiftool'),
+  pickExiftool: () => ipcRenderer.invoke('cove:pickExiftool'),
+  writeGps: (opts) => ipcRenderer.invoke('cove:writeGps', opts),
+  geocode: (q) => ipcRenderer.invoke('cove:geocode', q),
+  onGpsProgress: (cb) => {
+    const fn = (_e, d) => { try { cb(d); } catch (err) { /* ignore */ } };
+    ipcRenderer.on('cove:gpsProgress', fn);
+    return () => ipcRenderer.removeListener('cove:gpsProgress', fn);
+  },
 });

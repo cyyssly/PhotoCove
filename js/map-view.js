@@ -370,9 +370,12 @@ const MAPVIEW = (() => {
     box.innerHTML = '';
 
     shown.forEach(g => {
-      const item = document.createElement('button');
-      item.type = 'button';
+      // 行本身用 div 而不是 button：里面还要放一个「用 GPSStamp 打开」的小按钮，
+      // 按钮不能嵌套按钮（HTML 规范），嵌套后点击行为在部分 Chromium 版本上会错乱。
+      const item = document.createElement('div');
       item.className = 'nogps-item nogps-folder';
+      item.tabIndex = 0;
+      item.setAttribute('role', 'button');
       const d = dirOf(g.dirId);
       item.title = (d && d.path ? d.path + (g.folder ? '\\' + g.folder.replace(/\//g, '\\') : '') : folderTitle(g))
         + ' · ' + g.count + ' 张';
@@ -390,14 +393,37 @@ const MAPVIEW = (() => {
       item.appendChild(nm);
       item.appendChild(ct);
 
+      // 老路径保留：外部 GPSStamp 对 RAW/HEIC 更稳，也有人习惯它的界面
+      const alt = document.createElement('button');
+      alt.type = 'button';
+      alt.className = 'nogps-alt';
+      alt.textContent = '↗';
+      alt.title = '用本机 GPSStamp 打开这个文件夹';
+      alt.addEventListener('click', e => { e.stopPropagation(); openExternal(g); });
+      item.appendChild(alt);
+
       if (typeof VIEWS !== 'undefined' && typeof VIEWS.thumbInto === 'function') VIEWS.thumbInto(th, g.sample);
       item.addEventListener('click', () => { openFolder(g); });
+      item.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openFolder(g); }
+      });
       box.appendChild(item);
     });
   }
 
-  /* 点文件夹：拼出本机绝对路径 → 直接唤起 GPSStamp */
+  /* 点文件夹：在本应用内打开 GPS 编辑器（默认只载入该文件夹里缺 GPS 的照片） */
   async function openFolder(g) {
+    if (typeof GPSEDIT === 'undefined' || !GPSEDIT) { toast('编辑器还没加载完，请稍后再试'); return; }
+    closeNoGps();
+    try {
+      await GPSEDIT.openFolder(g.dirId, g.folder);
+    } catch (e) {
+      toast('打开编辑器失败：' + (e && e.message ? e.message : e), true);
+    }
+  }
+
+  /* 仍要走外部工具：拼出本机绝对路径 → 唤起 GPSStamp */
+  async function openExternal(g) {
     const d = dirOf(g.dirId);
     if (!d) { toast('找不到该图片库记录，请回设置页刷新后重试'); return; }
     if (typeof APP === 'undefined' || !APP) { toast('页面脚本还没就绪，请稍后再试'); return; }

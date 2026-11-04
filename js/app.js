@@ -560,6 +560,7 @@
   async function boot() {
     if (!checkCompat()) return;
     VIEWS.init();
+    if (typeof GPSEDIT !== 'undefined' && GPSEDIT) GPSEDIT.init();
     applyTheme().catch(() => {});
     // 必须先确认目录是否可读再渲染：读不到的目录会让每张缩略图解码立即失败。
     await refreshReadable().catch(() => {});

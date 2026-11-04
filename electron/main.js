@@ -10,12 +10,16 @@
  */
 'use strict';
 
-const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, protocol, shell } = require('electron');
+const { app, BrowserWindow, Menu, dialog, ipcMain, nativeTheme, net, protocol, shell } = require('electron');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const { Readable } = require('stream');
-const { spawn } = require('child_process');
+const { spawn, execFile, execFileSync } = require('child_process');
+const { promisify } = require('util');
+const os = require('os');
+
+const execFileAsync = promisify(execFile);
 
 /* 被当成普通 Node 进程时（环境里存在 ELECTRON_RUN_AS_NODE=1），
  * require('electron') 拿到的是路径字符串而不是 API，报错会非常难懂。
@@ -51,6 +55,12 @@ const SELFTEST_DIR = (() => {
 })();
 const SHOT_VIEW = (() => {
   const i = ARGV.indexOf('--view');
+  return i >= 0 && ARGV[i + 1] ? ARGV[i + 1] : '';
+})();
+/* 开发用：--eval <文件> 在真实页面里跑一段脚本并打印结果。
+ * 用来驱动界面做端到端验证（点按钮、开面板、截图），打包后不生效。 */
+const EVAL = (() => {
+  const i = ARGV.indexOf('--eval');
   return i >= 0 && ARGV[i + 1] ? ARGV[i + 1] : '';
 })();
 
@@ -239,6 +249,111 @@ function launchGpsStamp(folder, missingOnly) {
   }
 }
 
+/* ============ 6.5 exiftool：写 GPS 与地名查询 ============
+ * 写入沿用 GPSStamp 已经验证过的那套调用方式，参数一个都不改：
+ *   - 参数文件（-@）而不是命令行：中文路径直接当命令行参数会触发
+ *     "FileName encoding must be specified"，且路径里的空格会被当成分隔符。
+ *   - -charset filename=utf8：让 exiftool 按 UTF-8 解析参数文件里的路径。
+ *   - -m：忽略 MakerNotes 轻微损坏（手机转发过的图常见），否则整张图放弃写入。
+ *   - -GPSPosition=lat,lon：一次写全 GPSLatitude/Longitude 与两个 Ref 标签。
+ *   - 每批 40 张：exiftool 是 Perl 打包的单进程，一次上千个文件会吃掉大量内存。
+ */
+let _exiftool = '';
+
+/* GPSStamp 早就把「它找到的 exiftool 在哪」写进了自己的 settings.ini。
+ * 同一台机器上没必要让用户再选一次，直接拿来用；文件读不到就算了。 */
+function exiftoolFromGpsStamp(baseDir) {
+  try {
+    const ini = path.join(baseDir, 'GPSStamp', 'settings.ini');
+    if (!fs.existsSync(ini)) return '';
+    const txt = fs.readFileSync(ini, 'utf8').replace(/^\uFEFF/, '');
+    for (const line of txt.split(/\r?\n/)) {
+      const m = /^\s*exiftool\s*=\s*(.+)$/i.exec(line);
+      if (m) {
+        const p = m[1].trim();
+        if (p && fs.existsSync(p)) return p;
+      }
+    }
+  } catch (e) { /* ignore */ }
+  return '';
+}
+
+function findExifTool() {
+  if (_exiftool && fs.existsSync(_exiftool)) return _exiftool;
+  _exiftool = '';
+
+  const cands = [
+    path.join(EXE_DIR, 'exiftool.exe'),
+    path.join(EXE_DIR, 'ExifToolGUI', 'exiftool.exe'),
+    path.join(EXE_DIR, 'GPSStamp', 'exiftool.exe'),
+    path.join(path.dirname(EXE_DIR), 'exiftool.exe'),
+    path.join(path.dirname(EXE_DIR), 'ExifToolGUI', 'exiftool.exe'),
+    path.join(String(process.env.ProgramFiles || ''), 'ExifTool', 'exiftool.exe'),
+    path.join(String(process.env['ProgramFiles(x86)'] || ''), 'ExifTool', 'exiftool.exe'),
+    path.join(os.homedir(), 'exiftool.exe'),
+  ];
+  for (const c of cands) {
+    try { if (c && fs.existsSync(c)) { _exiftool = c; return c; } } catch (e) { /* ignore */ }
+  }
+
+  // 从 GPSStamp 的配置里捡现成的（它一定已经把路径找好了）
+  const fromStamp = exiftoolFromGpsStamp(EXE_DIR) || exiftoolFromGpsStamp(APP_DIR);
+  if (fromStamp) { _exiftool = fromStamp; return fromStamp; }
+
+  // PATH 里找
+  try {
+    const r = execFileSync('where', ['exiftool.exe'], {
+      encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const first = String(r || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)[0];
+    if (first && fs.existsSync(first)) { _exiftool = first; return first; }
+  } catch (e) { /* 没装 */ }
+  return '';
+}
+
+/* 备份放到 data\gps-backup\ 下，镜像原路径（F:\a\b.jpg → data\gps-backup\F\a\b.jpg）。
+ * 不用 exiftool 自带的 "_original" 同目录备份：那会在照片文件夹里多出
+ * xxx_original.jpg，下次扫描会当成新照片索引进来，作品集里凭空多一倍重复图。 */
+function gpsBackupPathOf(abs) {
+  const rel = String(abs).replace(/^([a-zA-Z]):[\\/]/, '$1/').replace(/[:*?"<>|]/g, '_');
+  return path.join(DATA_DIR, 'gps-backup', rel);
+}
+
+function writeArgFile(lines) {
+  const p = path.join(os.tmpdir(), 'cove_gps_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8) + '.txt');
+  fs.writeFileSync(p, lines.join('\r\n'), { encoding: 'utf8' });   // 不能带 BOM
+  return p;
+}
+
+async function runExifTool(exe, argFile) {
+  try {
+    const { stdout, stderr } = await execFileAsync(
+      exe, ['-charset', 'filename=utf8', '-@', argFile],
+      { windowsHide: true, maxBuffer: 64 * 1024 * 1024, encoding: 'utf8' },
+    );
+    return { status: 0, stdout: stdout || '', stderr: stderr || '' };
+  } catch (e) {
+    // 单个文件失败会让退出码非零，但其余文件可能都成功了——交给调用方看统计
+    return {
+      status: e && e.code != null ? e.code : -1,
+      stdout: (e && e.stdout) || '',
+      stderr: (e && e.stderr) || '',
+      error: e && e.message ? e.message : String(e),
+    };
+  }
+}
+
+/* exiftool 在 Windows 上会输出 perl 的 locale 警告，与写入结果无关，滤掉 */
+const EXIFTOOL_NOISE = [
+  'perl: warning', 'locale settings', 'Falling back to the standard locale',
+  'LC_ALL', 'LANG =', 'installed on your system', 'Please check that your locale',
+];
+function cleanExifToolLines(text) {
+  return String(text || '').split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(s => s && !EXIFTOOL_NOISE.some(n => s.includes(n)));
+}
+
 /* ============ 7. IPC ============ */
 function registerIpc() {
   ipcMain.handle('cove:info', () => ({
@@ -314,6 +429,139 @@ function registerIpc() {
   });
 
   ipcMain.handle('cove:gpsstamp', async (_e, folder, missingOnly) => launchGpsStamp(folder, missingOnly !== false));
+
+  /* ---- GPS 编辑：exiftool 探测 / 手动指定 ---- */
+  ipcMain.handle('cove:exiftool', () => {
+    const p = findExifTool();
+    return { path: p, dir: p ? path.dirname(p) : '' };
+  });
+
+  ipcMain.handle('cove:pickExiftool', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    const r = await dialog.showOpenDialog(win, {
+      title: '选择 exiftool.exe',
+      properties: ['openFile', 'dontAddToRecent'],
+      filters: [{ name: '可执行文件', extensions: ['exe'] }, { name: '所有文件', extensions: ['*'] }],
+    });
+    if (r.canceled || !r.filePaths.length) return { path: '' };
+    const p = r.filePaths[0];
+    if (path.basename(p).toLowerCase() !== 'exiftool.exe') {
+      return { path: '', error: '请选择 exiftool.exe 本体' };
+    }
+    _exiftool = p;
+    return { path: p };
+  });
+
+  /* ---- GPS 编辑：批量写入 ----
+   * opts = { files: 绝对路径[], lat, lng, backup, exiftool? }
+   * 返回 { ok, updated, failed, total, errors[] }；进度通过 cove:gpsProgress 推送。 */
+  ipcMain.handle('cove:writeGps', async (event, opts) => {
+    const o = opts || {};
+    const exe = String(o.exiftool || '') || findExifTool();
+    if (!exe) return { ok: false, error: '没有找到 exiftool.exe' };
+    if (!fs.existsSync(exe)) return { ok: false, error: 'exiftool.exe 不存在：' + exe };
+
+    const lat = Number(o.lat);
+    const lng = Number(o.lng);
+    if (!isFinite(lat) || !isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) {
+      return { ok: false, error: '坐标不合法' };
+    }
+
+    const files = Array.isArray(o.files) ? o.files.filter(f => typeof f === 'string' && f) : [];
+    if (!files.length) return { ok: false, error: '没有选中照片' };
+
+    // 先筛掉不存在的，别让 exiftool 把整批都报错
+    const valid = [];
+    let failed = 0;
+    for (const f of files) {
+      try {
+        if (fs.statSync(toFsPath(f)).isFile()) valid.push(f);
+        else failed++;
+      } catch (e) { failed++; }
+    }
+
+    const coord = lat.toFixed(6) + ',' + lng.toFixed(6);
+    const backup = o.backup !== false;
+    const CHUNK = 40;
+    const total = valid.length;
+    let updated = 0;
+    const errors = [];
+    let backupFailed = 0;
+
+    for (let i = 0; i < total; i += CHUNK) {
+      const chunk = valid.slice(i, i + CHUNK);
+
+      if (backup) {
+        for (const f of chunk) {
+          try {
+            const b = gpsBackupPathOf(f);
+            if (!fs.existsSync(b)) {
+              await fsp.mkdir(path.dirname(b), { recursive: true });
+              await fsp.copyFile(f, b);
+            }
+          } catch (e) { backupFailed++; }
+        }
+      }
+
+      const lines = ['-GPSPosition=' + coord, '-m', '-overwrite_original'];
+      for (const f of chunk) lines.push(f);
+      const argFile = writeArgFile(lines);
+      let r;
+      try {
+        r = await runExifTool(exe, argFile);
+      } finally {
+        try { fs.unlinkSync(argFile); } catch (e) { /* ignore */ }
+      }
+
+      // 以 exiftool 自己的统计为准：一个坏文件就会让退出码非零，但其余的都成功了
+      let u = 0, f2 = 0;
+      for (const m of String(r.stdout).matchAll(/(\d+)\s+image files? updated/g)) u += Number(m[1]);
+      for (const m of String(r.stdout).matchAll(/(\d+)\s+files? weren't updated/g)) f2 += Number(m[1]);
+      if (!u && !f2) { if (r.status === 0) u = chunk.length; else f2 = chunk.length; }
+      updated += u;
+      failed += f2;
+
+      for (const line of cleanExifToolLines(r.stderr)) {
+        if (line.includes('Error:') && !line.includes('[minor]')) errors.push(line);
+      }
+      if (!updated && !failed && r.error) errors.push(r.error);
+
+      try {
+        event.sender.send('cove:gpsProgress', { done: Math.min(i + chunk.length, total), total });
+      } catch (e) { /* 窗口已关 */ }
+    }
+
+    return { ok: true, updated, failed, total, backupFailed, errors: errors.slice(0, 8), coord };
+  });
+
+  /* ---- 地名 → 坐标 ----
+   * 用 OpenStreetMap 的 Nominatim：免 Key，返回 WGS-84，
+   * 与照片 EXIF 和底图同一坐标系，不需要 GCJ-02/BD-09 那套纠偏。
+   * 使用条款要求带可识别的 User-Agent，且不要高频请求（这里由用户手动触发）。 */
+  ipcMain.handle('cove:geocode', async (_e, q) => {
+    const query = String(q || '').trim();
+    if (!query) return { ok: false, error: '请输入地名' };
+    if (query.length > 120) return { ok: false, error: '地名太长了' };
+    const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&addressdetails=1'
+      + '&accept-language=zh-CN,zh&q=' + encodeURIComponent(query);
+    try {
+      const r = await net.fetch(url, {
+        headers: { 'User-Agent': 'PhotoCove/18.0 (local photo library; desktop)', 'Accept': 'application/json' },
+      });
+      if (!r.ok) return { ok: false, error: '地名服务返回 ' + r.status };
+      const arr = await r.json();
+      const results = (Array.isArray(arr) ? arr : []).slice(0, 8).map(it => {
+        const lat = Number(it.lat);
+        const lng = Number(it.lon);
+        const dn = String(it.display_name || '');
+        const first = String(it.name || dn.split(',')[0] || '').trim();
+        return { lat, lng, label: first, detail: dn.split(',').slice(1).join(',').trim() };
+      }).filter(x => isFinite(x.lat) && isFinite(x.lng));
+      return { ok: true, results };
+    } catch (e) {
+      return { ok: false, error: '联网失败：' + (e && e.message ? e.message : String(e)) };
+    }
+  });
 
   ipcMain.handle('cove:reveal', async (_e, p) => {
     try {
@@ -420,8 +668,7 @@ function buildMenu() {
  * electron . --selftest --dir "F:\01照片\某目录"
  * 隐藏窗口跑完整链路：注册适配层 → 建目录记录 → 扫描 → 生成缩略图 → 取原图，
  * 结果打到 stdout 并以退出码表示成败。 */
-async function runSelftest() {
-  const script = fs.readFileSync(path.join(__dirname, 'selftest.renderer.js'), 'utf8');
+async function runSelftest() {  const script = fs.readFileSync(path.join(__dirname, 'selftest.renderer.js'), 'utf8');
   let result;
   try {
     result = await mainWin.webContents.executeJavaScript(
@@ -437,6 +684,31 @@ async function runSelftest() {
     console.log('SELFTEST_FAILED ' + JSON.stringify(result.failed));
   }
   setTimeout(() => app.exit(failed ? 1 : 0), 200);
+}
+
+/* ============ 10.5 开发用 --eval ============
+ * electron . --eval tests/xxx.js
+ * 文件内容被包进一个 async 函数在页面里执行，可以 await、可以 return 结果。
+ * 只在未打包时可用：打包后的程序不接受这个参数。 */
+async function runEval(file) {
+  let result;
+  try {
+    const script = fs.readFileSync(file, 'utf8');
+    result = await mainWin.webContents.executeJavaScript(
+      '(async () => {' + script + '\n})()', true
+    );
+  } catch (e) {
+    result = { ok: false, error: 'executeJavaScript 失败：' + (e && e.message ? e.message : e) };
+  }
+  console.log('EVAL_RESULT ' + JSON.stringify(result, null, 2));
+  if (SHOT) {
+    try {
+      const img = await mainWin.webContents.capturePage();
+      fs.writeFileSync(SHOT, img.toPNG());
+      console.log('SHOT_OK ' + SHOT);
+    } catch (e) { console.log('SHOT_FAIL ' + (e && e.message)); }
+  }
+  setTimeout(() => app.exit(result && result.ok ? 0 : 1), 150);
 }
 
 /* ============ 11. 生命周期 ============ */
@@ -467,8 +739,16 @@ if (!app.requestSingleInstanceLock()) {
       setTimeout(() => { console.log('SELFTEST_TIMEOUT'); app.exit(4); }, 120000).unref();
     }
 
-    if (SHOT) {
-      // 截图模式：用来核对桌面壳里的真实排版（网页版截图看不出壳的问题）
+    if (EVAL && !app.isPackaged) {
+      mainWin.webContents.on('console-message', (_e, level, msg) => {
+        console.log('[renderer:' + level + '] ' + msg);
+      });
+      mainWin.webContents.once('did-finish-load', () => { runEval(EVAL); });
+      setTimeout(() => { console.log('EVAL_TIMEOUT'); app.exit(5); }, 120000).unref();
+    }
+
+    if (SHOT && !EVAL) {
+      // 截图模式：用来核对桌面壳里的真实排版
       // 带 --dir 时先真扫一个目录，截出来的才是"有照片"的样子
       mainWin.webContents.on('console-message', (_e, level, msg) => {
         console.log('[renderer:' + level + '] ' + msg);

@@ -735,6 +735,17 @@ const VIEWS = (() => {
       const p = state.lbList[state.lbIndex];
       if (p) locateOnMap(p);
     });
+    $('#lb-gps').addEventListener('click', () => {
+      const p = state.lbList[state.lbIndex];
+      if (!p) return;
+      if (typeof GPSEDIT === 'undefined') return;
+      closeLb();
+      GPSEDIT.open([p], '标记 GPS · ' + (p.name || ''));
+    });
+    $('#lb-reveal').addEventListener('click', () => {
+      const p = state.lbList[state.lbIndex];
+      if (p) revealPhoto(p);
+    });
 
     // 返回顶端：滚动事件用 rAF 合帧，避免长列表里频繁读布局
     const topBtn = $('#back-to-top');
@@ -751,9 +762,19 @@ const VIEWS = (() => {
     window.addEventListener('resize', updateBackTop);
     document.addEventListener('keydown', e => {
       if ($('#lightbox').classList.contains('hidden')) return;
+      // 输入框里打字时不触发快捷键（顶栏筛选之外的场景很少，但别误伤）
+      const tag = (e.target && e.target.tagName) || '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
       if (e.key === 'Escape') closeLb();
       else if (e.key === 'ArrowLeft') lbStep(-1);
       else if (e.key === 'ArrowRight') lbStep(1);
+      else if (e.key === 'g' || e.key === 'G') {
+        const p = state.lbList[state.lbIndex];
+        if (p && typeof GPSEDIT !== 'undefined') { closeLb(); GPSEDIT.open([p], '标记 GPS · ' + (p.name || '')); }
+      } else if (e.key === 'r' || e.key === 'R') {
+        const p = state.lbList[state.lbIndex];
+        if (p) revealPhoto(p);
+      }
     });
     let touchX = null;
     $('#lightbox').addEventListener('touchstart', e => { touchX = e.touches[0].clientX; }, { passive: true });
@@ -788,10 +809,26 @@ const VIEWS = (() => {
     });
   }
 
+  /* 在资源管理器里显示这张照片（文件会被选中）。
+   * 目录记录里带着绝对路径，relPath 用 / 分隔，拼成 Windows 路径后交给主进程。 */
+  async function revealPhoto(p) {
+    const fail = msg => { if (typeof APP !== 'undefined' && APP && APP.toast) APP.toast(msg, true); };
+    try {
+      const dirs = await DB.listDirs();
+      const d = dirs.find(x => String(x.id) === String(p.dirId));
+      if (!d || !d.path) { fail('这个图片库没有本机路径，无法定位文件'); return; }
+      const abs = PLATFORM.joinPath(d.path, p.relPath);
+      const r = await PLATFORM.reveal(abs);
+      if (!r || r.ok === false) fail('打开失败：' + ((r && r.error) || '未知原因'));
+    } catch (e) {
+      fail('打开失败：' + (e && e.message ? e.message : e));
+    }
+  }
+
   /* 供地图视图复用缩略图懒加载（无 GPS 照片面板） */
   function thumbInto(el, p) {
     fillMedia(el, p, true);
   }
 
-  return { init, reload, render, state, openLightbox, thumbInto };
+  return { init, reload, render, state, openLightbox, thumbInto, revealPhoto };
 })();

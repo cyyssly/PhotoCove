@@ -79,7 +79,7 @@
         <button id="map-nogps-close" class="map-nogps-close" type="button" title="关闭">×</button>
       </div>
       <div id="map-nogps-list" class="map-nogps-list"></div>
-      <p class="map-nogps-note">按文件夹聚合。点一下文件夹会用本机的 <b>GPSStamp</b> 打开它，并只载入其中没有 GPS 的照片，填一次坐标即可补齐。EXIF 里没有 GPS 的多见于老相机、截图或转发下载的图片，照片本身不受影响。</p>
+      <p class="map-nogps-note">按文件夹聚合。点一下文件夹就在应用内打开编辑器：只载入其中没有 GPS 的照片，在图上点一下或搜地名，一次写入全部。行尾的 <b>↗</b> 是备用入口，用本机的 <b>GPSStamp</b> 打开。EXIF 里没有 GPS 的多见于老相机、截图或转发下载的图片，照片本身不受影响。</p>
     </aside>
     <div id="map-empty" class="empty-state hidden">
       <div class="map-empty-card">
@@ -150,7 +150,7 @@
           <span>存储状态<span class="settings-sub">本站缓存的缩略图与预览图占用的空间，原图不计入</span></span>
           <div id="storage-info" class="diag-info">检查中…</div>
         </div>
-        <p class="settings-hint">程序版本 v18。</p>
+        <p class="settings-hint">程序版本 v19。</p>
       </div>
 
       <!-- 使用须知 -->
@@ -162,7 +162,7 @@
           <li><b>数据存储</b>：缩略图和索引保存在本机，原图始终留在原目录，不会被移动或修改。</li>
           <li><b>RAW 支持</b>：默认关闭。RAW 文件（CR2/CR3/ARW/NEF/ORF/DNG 等）开启支持后，通过提取相机内嵌的 JPEG 预览图展示，不解码原始传感器数据。</li>
           <li><b>迁移</b>：整个文件夹拷贝即可部署到其他电脑，<b>data\</b> 一并带上就连索引和缩略图都跟着走，无需重扫。</li>
-          <li><b>补 GPS 联动</b>：地图页左下角按文件夹聚合无位置信息的照片，点一下直接启动同目录下的 <b>GPSStamp</b>，并且只载入该文件夹里缺 GPS 的照片，填一次坐标即可，已有坐标的照片不会被覆盖。</li>
+          <li><b>补 GPS</b>：地图页左下角按文件夹聚合无位置信息的照片，点一下在应用内打开编辑器——在图上点选位置，或搜地名（OpenStreetMap 数据，WGS-84，与照片坐标一致、无偏移），可一次写入整个文件夹。只载入缺 GPS 的照片，已有坐标的不会被覆盖；写入前会自动把原图备份到 <b>data\gps-backup\</b>。大图页也可以对单张按 <b>G</b> 标记、按 <b>R</b> 在文件夹中显示。</li>
         </ul>
       </details>
     </div>
@@ -186,7 +186,11 @@
 
 <!-- Lightbox -->
 <div id="lightbox" class="lightbox hidden">
-  <button id="lb-map" class="lb-map hidden" type="button" title="在地图中定位这张照片">在地图中查看</button>
+  <div class="lb-tools">
+    <button id="lb-map" class="lb-map hidden" type="button" title="在地图中定位这张照片">在地图中查看</button>
+    <button id="lb-gps" class="lb-map" type="button" title="为这张照片写入 GPS 坐标 (G)">标记 GPS</button>
+    <button id="lb-reveal" class="lb-map" type="button" title="在资源管理器中显示 (R)">在文件夹中显示</button>
+  </div>
   <button class="lb-close" id="lb-close" title="关闭 (Esc)">×</button>
   <button class="lb-nav lb-prev" id="lb-prev" title="上一张 (←)">‹</button>
   <div class="lb-stage">
@@ -196,6 +200,59 @@
   <button class="lb-nav lb-next" id="lb-next" title="下一张 (→)">›</button>
   <div class="lb-info" id="lb-info"></div>
   <div class="lb-strip" id="lb-strip"></div>
+</div>
+
+<!-- GPS 编辑器：左侧挑照片，右侧选点 -->
+<div id="gps-overlay" class="gps-overlay hidden">
+  <div class="gps-panel" role="dialog" aria-modal="true" aria-labelledby="gps-title">
+    <div class="gps-head">
+      <h3 id="gps-title">标记 GPS 位置</h3>
+      <span id="gps-sub" class="gps-sub"></span>
+      <button id="gps-close" class="gps-close" type="button" title="关闭 (Esc)">×</button>
+    </div>
+
+    <div class="gps-body">
+      <!-- 左：待写入的照片 -->
+      <div class="gps-col gps-col-list">
+        <div class="gps-list-head">
+          <label class="gps-check"><input type="checkbox" id="gps-all"> 全选</label>
+          <span id="gps-count" class="gps-count">0 / 0</span>
+        </div>
+        <div id="gps-list" class="gps-list"></div>
+        <p class="gps-note" id="gps-list-note"></p>
+      </div>
+
+      <!-- 右：坐标与地图 -->
+      <div class="gps-col gps-col-form">
+        <div class="gps-field">
+          <label for="gps-q">搜地名</label>
+          <div class="gps-search">
+            <input id="gps-q" type="text" placeholder="例如：广州塔 / 武汉东湖 / 西湖断桥" autocomplete="off">
+            <button id="gps-search-btn" class="btn btn-small" type="button">搜索</button>
+          </div>
+          <div id="gps-results" class="gps-results hidden"></div>
+        </div>
+
+        <div class="gps-field">
+          <label for="gps-lat">坐标（纬度, 经度）</label>
+          <div class="gps-coord">
+            <input id="gps-lat" type="text" inputmode="decimal" placeholder="22.56741" autocomplete="off">
+            <input id="gps-lng" type="text" inputmode="decimal" placeholder="114.14382" autocomplete="off">
+          </div>
+        </div>
+
+        <div id="gps-map" class="gps-map"></div>
+        <p class="gps-hint">在图上点一下即可取坐标，标记可拖动微调。</p>
+
+        <div class="gps-foot">
+          <label class="gps-check"><input type="checkbox" id="gps-backup" checked> 备份原图到 data\gps-backup</label>
+          <button id="gps-pick-exe" class="btn btn-small btn-ghost hidden" type="button">指定 exiftool</button>
+          <button id="gps-write" class="btn" type="button">写入</button>
+        </div>
+        <div id="gps-log" class="gps-log"></div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- 确认对话框 -->
@@ -222,6 +279,7 @@
 <script src="assets/vendor/leaflet/leaflet.js"></script>
 <script src="assets/vendor/leaflet/leaflet.markercluster.js"></script>
 <script src="js/map-view.js"></script>
+<script src="js/gps-editor.js"></script>
 <script src="js/app.js"></script>
 
 <!-- 引导层：不是从桌面窗口启动时显示。

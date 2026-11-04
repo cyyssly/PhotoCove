@@ -177,5 +177,47 @@ const PLATFORM = (() => {
     async launchGpsStamp(folder) {
       return D.launchGpsStamp(folder);
     },
+
+    /* 在资源管理器里显示：文件会选中它本身，目录直接打开 */
+    async reveal(absPath) {
+      if (!absPath) return { ok: false, error: '没有路径' };
+      return D.reveal(absPath);
+    },
+
+    /* 把库内相对路径拼成本机绝对路径（写 EXIF、定位文件都要用） */
+    joinPath(root, rel) {
+      return join(root, rel);
+    },
+
+    /* exiftool 探测：返回 { path }，找不到时 path 为 '' */
+    async exiftool() {
+      try {
+        const r = await D.exiftool();
+        return (r && r.path) || '';
+      } catch (e) { return ''; }
+    },
+
+    async pickExiftool() {
+      return D.pickExiftool();
+    },
+
+    /* 批量写 GPS：files 为绝对路径数组 */
+    async writeGps(opts) {
+      return D.writeGps(opts);
+    },
+
+    /* 监听写入进度，返回取消监听的函数 */
+    onGpsProgress(cb) {
+      return D.onGpsProgress(cb);
+    },
+
+    /* 地名查坐标（主进程代理，避免页面受 CORS 与 UA 限制） */
+    async geocode(q) {
+      try {
+        return await D.geocode(q);
+      } catch (e) {
+        return { ok: false, error: e && e.message ? e.message : String(e), results: [] };
+      }
+    },
   };
 })();
