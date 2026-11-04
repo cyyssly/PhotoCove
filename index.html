@@ -23,6 +23,7 @@
     <button class="nav-btn" data-view="albums">相册集</button>
     <button class="nav-btn" data-view="map">地图</button>
     <button class="nav-btn" data-view="settings">设置</button>
+    <button class="nav-btn" data-view="help">帮助</button>
   </nav>
   <div class="topbar-status">
     <span id="scan-status" class="scan-status"></span>
@@ -144,21 +145,162 @@
           <span>存储状态<span class="settings-sub">本站缓存的缩略图与预览图占用的空间，原图不计入</span></span>
           <div id="storage-info" class="diag-info">检查中…</div>
         </div>
-        <p class="settings-hint">程序版本 v19。</p>
+        <p class="settings-hint">程序版本 v20。</p>
       </div>
 
-      <!-- 使用须知 -->
-      <details class="notice">
-        <summary>使用须知</summary>
-        <ul>
-          <li><b>读写方式</b>：直接读写磁盘，选一次目录就记住绝对路径，没有授权步骤，启动即用。索引与缩略图存在程序目录的 <b>data\</b> 里，整个文件夹拷走即可换机器（照片在原位置，不受影响）。</li>
-          <li><b>目录读不到</b>：设置页目录行显示「不可用」时，通常是外接盘没插、或文件夹被改名/移动了。插回盘后点「重新检查」即可，不必重新添加。</li>
-          <li><b>数据存储</b>：缩略图和索引保存在本机，原图始终留在原目录，不会被移动或修改。</li>
-          <li><b>RAW 支持</b>：默认关闭。RAW 文件（CR2/CR3/ARW/NEF/ORF/DNG 等）开启支持后，通过提取相机内嵌的 JPEG 预览图展示，不解码原始传感器数据。</li>
-          <li><b>迁移</b>：整个文件夹拷贝即可部署到其他电脑，<b>data\</b> 一并带上就连索引和缩略图都跟着走，无需重扫。</li>
-          <li><b>补 GPS</b>：地图页左下角按文件夹聚合无位置信息的照片，点一下在应用内打开编辑器——在图上点选位置，或搜地名（OpenStreetMap 数据，WGS-84，与照片坐标一致、无偏移），可一次写入整个文件夹。只载入缺 GPS 的照片，已有坐标的不会被覆盖；写入前会自动把原图备份到 <b>data\gps-backup\</b>。大图页也可以对单张按 <b>G</b> 标记、按 <b>R</b> 在文件夹中显示。</li>
-        </ul>
-      </details>
+      <p class="settings-hint settings-foot">完整的操作说明、快捷键与常见问题见 <a href="#" data-goto="help">帮助</a>。</p>
+    </div>
+  </section>
+
+  <!-- 帮助：说明文档 + 使用须知的合并版 -->
+  <section id="view-help" class="view hidden">
+    <div class="help-wrap">
+      <aside class="help-toc">
+        <div class="help-toc-title">帮助目录</div>
+        <a href="#help-start">快速上手</a>
+        <a href="#help-browse">浏览与操作</a>
+        <a href="#help-gps">地图与补 GPS</a>
+        <a href="#help-data">数据与迁移</a>
+        <a href="#help-format">格式支持</a>
+        <a href="#help-limits">已知限制</a>
+        <a href="#help-faq">常见问题</a>
+        <div class="help-toc-foot">程序版本 v20</div>
+      </aside>
+
+      <div class="help-body">
+        <section id="help-start" class="help-card">
+          <h2>快速上手</h2>
+          <p>PhotoCove 是本地照片浏览工具：直接读你指定的文件夹，不搬动、不改写任何照片；索引与缩略图存在程序目录的 <b>data\</b> 里。</p>
+          <ol class="help-steps">
+            <li>到 <a href="#" data-goto="settings">设置</a> 点「＋ 添加图片库目录」，选一个照片文件夹。可以添加多个，子文件夹会自动识别为相册。</li>
+            <li>点该目录右侧的「扫描」。首次会为每张照片读一段文件头（不解码像素），两万张的量级以分钟计。</li>
+            <li>回到 <a href="#" data-goto="portfolio">作品集</a> 浏览。之后每次打开都直接显示上次的结果，<b>不会自动扫描</b>。</li>
+          </ol>
+          <p class="help-note">扫描期间右下角有进度浮卡，可随时取消，已扫的部分照常入库。要更新时点对应目录的「扫描」，或在「设置 → 维护」里全量重新扫描。</p>
+        </section>
+
+        <section id="help-browse" class="help-card">
+          <h2>浏览与操作</h2>
+          <table class="help-table">
+            <thead><tr><th>视图</th><th>说明</th></tr></thead>
+            <tbody>
+              <tr><td>作品集</td><td>瀑布流，可按年份 / 器材 / 相册筛选</td></tr>
+              <tr><td>时间轴</td><td>按拍摄日期分组，拍摄时间取自 EXIF</td></tr>
+              <tr><td>相册集</td><td>子文件夹自动识别为相册</td></tr>
+              <tr><td>地图</td><td>带 GPS 的照片点亮在地图上，密集处聚合为数字气泡</td></tr>
+              <tr><td>设置</td><td>目录管理、RAW 开关、主题、维护与存储状态</td></tr>
+              <tr><td>帮助</td><td>就是你现在看的这一页：操作说明、快捷键与常见问题</td></tr>
+            </tbody>
+          </table>
+
+          <h3>大图</h3>
+          <ul class="help-keys">
+            <li><span class="keys"><kbd>←</kbd><kbd>→</kbd><kbd>滚轮</kbd></span><span>上一张 / 下一张</span></li>
+            <li><span class="keys"><kbd>Esc</kbd></span><span>关闭大图</span></li>
+            <li><span class="keys"><kbd>单击图片</kbd></span><span>进入全屏</span></li>
+            <li><span class="keys"><kbd>G</kbd></span><span>给这一张标记 GPS 位置</span></li>
+            <li><span class="keys"><kbd>R</kbd></span><span>在资源管理器中显示，并直接选中该文件</span></li>
+          </ul>
+          <p class="help-note">大图底部的缩略图条可以直接点选跳转。</p>
+
+          <h3>加载策略</h3>
+          <ul>
+            <li>筛选栏（年份 / 器材 / 相册）对作品集、时间轴、相册集、地图都生效</li>
+            <li>每个视图每批渲染 36 张，滚到底自动追加，几万张也能秒开</li>
+            <li>缩略图在滚动进入视口时才生成，生成后缓存，第二次访问立即显示；单张解码超过 20 秒会放弃，点一下重试即可</li>
+            <li>顶栏右侧在滚动超过 3 屏后出现「↑ 返回顶端」</li>
+          </ul>
+        </section>
+
+        <section id="help-gps" class="help-card">
+          <h2>地图与补 GPS</h2>
+          <p>底图用免 API Key 的 OpenStreetMap 瓦片，随程序本地存放，多源自动降级（osm.de → osm.org → OpenTopoMap）。三者都是 Web 墨卡托 / WGS-84，与照片经纬度一致、无偏移。瓦片请求只发送瓦片坐标，不上传照片、文件名或经纬度。地名搜索与瓦片需要联网，其余功能离线可用。</p>
+
+          <h3>批量补坐标</h3>
+          <ol class="help-steps">
+            <li>地图页左下角点「N 张照片无位置信息」，面板按文件夹聚合（一次最多列 200 张，避免节点过多卡顿）。</li>
+            <li>点一个文件夹，应用内打开编辑器，<b>只载入该文件夹里缺 GPS 的照片</b>，已有坐标的不会被覆盖。</li>
+            <li>在图上点一下取坐标（标记可拖动微调），或输入地名搜索。搜索走 OpenStreetMap 的 Nominatim，返回 WGS-84，与照片和底图同一坐标系，<b>不需要 GCJ-02 / BD-09 纠偏</b>。</li>
+            <li>左侧全选或单选，点「写入」。写完成片会立即刷新网格、地图与索引。</li>
+          </ol>
+
+          <h3>关于写入</h3>
+          <ul>
+            <li><b>这是程序唯一会改动照片的操作</b>。写入的是 EXIF 里的 GPS 坐标，其余字段不动。</li>
+            <li>写入前自动把原图备份到 <b>data\gps-backup\</b>（镜像原路径），出问题可以还原。这里故意不用 exiftool 的 <code>_original</code> 同目录备份：那会在你的照片文件夹里多出 <code>xxx_original.jpg</code>，下次扫描被当成新照片索引进来。</li>
+            <li>写入由 exiftool 完成。没装时编辑器会提示，点「指定 exiftool」选一次即可，之后记住。</li>
+          </ul>
+
+          <h3>GPSStamp 备用入口</h3>
+          <p>文件夹行尾的 <b>↗</b> 会用同目录下的 <b>GPSStamp</b> 打开该文件夹（只载入缺 GPS 的照片）。对 RAW / HEIC 更稳，也可以单独使用，详见 <code>GPSStamp\使用说明.txt</code>。</p>
+        </section>
+
+        <section id="help-data" class="help-card">
+          <h2>数据与迁移</h2>
+          <p>索引和缩略图都在程序目录的 <b>data\</b> 里，原图始终留在你指定的文件夹中，不会被移动或修改。</p>
+          <table class="help-table">
+            <thead><tr><th>操作</th><th>索引 / 缩略图</th><th>原图</th></tr></thead>
+            <tbody>
+              <tr><td>项目文件夹改名、挪到别的盘</td><td>保留</td><td>不受影响</td></tr>
+              <tr><td>整个文件夹拷到另一台电脑</td><td>跟着走，不必重扫</td><td>不受影响</td></tr>
+              <tr><td>「清空本地索引」</td><td>全部删除，点「扫描」重建</td><td>不受影响</td></tr>
+            </tbody>
+          </table>
+          <ul>
+            <li>只有程序目录不可写时（例如放进 <code>Program Files</code>），才会退回系统的 <code>%APPDATA%\PhotoCove</code>；「设置 → 维护 → 存储状态」里会显示实际位置。</li>
+            <li>目录行显示<b>「不可用」</b>通常只是外接盘没插、或文件夹被改名挪走了。插回盘后点「重新检查」即可，不必重新添加。</li>
+          </ul>
+        </section>
+
+        <section id="help-format" class="help-card">
+          <h2>格式支持</h2>
+          <ul>
+            <li><b>常见格式</b>：JPEG / PNG / WebP / GIF / TIFF，直接解码显示。</li>
+            <li><b>RAW</b>（CR2 / CR3 / ARW / NEF / ORF / DNG 等）：默认关闭，需到设置里开启。开启后通过提取相机内嵌的 JPEG 预览图展示，<b>不解码原始传感器数据</b>；开启之前已扫描过的 RAW 需点「重建 RAW 索引」。</li>
+            <li><b>HEIC / HEIF</b>：暂不支持。Chromium 内核不解这个格式，要另接 libheif。</li>
+          </ul>
+        </section>
+
+        <section id="help-limits" class="help-card">
+          <h2>已知限制</h2>
+          <ul>
+            <li><b>没有代码签名</b>：exe 首次运行时 Windows SmartScreen 会拦一次，点「更多信息 → 仍要运行」即可，同一台机器放行一次后不再提示。用 U 盘或局域网拷贝过来的文件不带网络标记，通常连提示都没有。</li>
+            <li><b>不自动监视文件夹</b>：新加的照片需要手动「扫描」才进索引，之后走增量（比对修改时间 + 文件大小），只读变化的文件。</li>
+            <li><b>首次扫描较慢</b>：每张照片都要读一段文件头，两万张以分钟计；这是唯一一次性的开销。</li>
+            <li><b>地图页最多列 200 张无位置照片</b>：套图或截图特别多时分批处理，补完再点一次即可。</li>
+          </ul>
+        </section>
+
+        <section id="help-faq" class="help-card">
+          <h2>常见问题</h2>
+          <details class="help-faq">
+            <summary>打开后一张照片都没有？</summary>
+            <p>程序不会自动扫描。先确认筛选栏没把照片筛掉（年份 / 器材 / 相册都选「全部」），再到设置里给目录点一次「扫描」。若是新换的电脑，索引不会跟着照片走，需要重扫一次——除非你把 <b>data\</b> 一起拷过来了。</p>
+          </details>
+          <details class="help-faq">
+            <summary>缩略图一直是灰块或转圈？</summary>
+            <p>单张解码有 20 秒上限，超时会显示「加载超时 · 点击重试」。整片空白时，先看设置页目录徽章是不是「不可用」（盘没插、文件夹被改名），插回盘后点「重新检查」会自动恢复。</p>
+          </details>
+          <details class="help-faq">
+            <summary>索引到的照片比文件夹里少？</summary>
+            <p>只索引支持的图片格式，见「格式支持」。RAW 未开启时不计入；隐藏文件、非图片文件也会被跳过。</p>
+          </details>
+          <details class="help-faq">
+            <summary>换电脑要做什么？</summary>
+            <p>整个程序目录（含 <b>data\</b>）拷过去，照片留在原来的盘位即可，不用重扫。若照片路径变了，把旧的目录记录移除、重新添加扫描一次。</p>
+          </details>
+          <details class="help-faq">
+            <summary>补 GPS 会改动我的原图吗？</summary>
+            <p>会，但只改 EXIF 里的 GPS 坐标，并且写入前先备份到 <b>data\gps-backup\</b>。除此之外的所有操作都是只读的：扫描、生成缩略图、浏览都不会修改照片文件。</p>
+          </details>
+          <details class="help-faq">
+            <summary>能在浏览器里打开吗？</summary>
+            <p>不能。程序需要直接读写磁盘和调用 exiftool，浏览器沙箱做不到。直接双击 <code>index.html</code> 只会看到一张「请从桌面窗口启动」的引导页。</p>
+          </details>
+        </section>
+
+        <p class="help-sign">PhotoCove v20 · 本地运行，照片不上传</p>
+      </div>
     </div>
   </section>
 </main>

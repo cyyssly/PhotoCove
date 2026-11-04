@@ -80,8 +80,10 @@ const VIEWS = (() => {
 
   /* ---------- 渲染 ---------- */
   function render() {
-    $('#filter-bar').classList.toggle('hidden', state.view === 'settings');
-    ['portfolio', 'timeline', 'albums', 'map', 'settings'].forEach(v =>
+    // 帮助页和设置页都是纯文字，筛选栏在这两页没有意义
+    const plain = state.view === 'settings' || state.view === 'help';
+    $('#filter-bar').classList.toggle('hidden', plain);
+    ['portfolio', 'timeline', 'albums', 'map', 'settings', 'help'].forEach(v =>
       $('#view-' + v).classList.toggle('hidden', v !== state.view));
     // 相册详情才显示顶栏的返回按钮；切到其他视图立即收起
     const backBtn = $('#album-back');
@@ -96,6 +98,7 @@ const VIEWS = (() => {
       MAPVIEW.hide();
     }
     updateBackTop();
+    updateHelpToc();
   }
 
   /* 返回顶端：只在作品集 / 时间轴 / 相册列表、且滚动超过 3 屏时出现。
@@ -108,6 +111,29 @@ const VIEWS = (() => {
       (state.view === 'albums' && !state.album);
     const deep = (window.scrollY || document.documentElement.scrollTop || 0) > window.innerHeight * 3;
     btn.classList.toggle('hidden', !(scrollableView && deep));
+  }
+
+  /* 帮助页左侧目录的高亮：取最后一个顶边已经滚过判定线的卡片。
+   * 判定线贴住顶栏下沿，而不是"可见面积最大"——后者会让长卡片永远胜出，
+   * 首屏明明在看「快速上手」，却因为「浏览与操作」更长而高亮成它。
+   * 只在帮助页可见时算：隐藏状态下 getBoundingClientRect 全是 0，会全部判成已滚过。 */
+  function updateHelpToc() {
+    if (state.view !== 'help') return;
+    const links = Array.prototype.slice.call(document.querySelectorAll('.help-toc a'));
+    if (!links.length) return;
+    const line = 130;             // 顶栏 54px + 一点余量
+    let cur = links[0];
+    links.forEach(a => {
+      const t = document.getElementById(String(a.getAttribute('href') || '').slice(1));
+      if (t && t.getBoundingClientRect().top <= line) cur = a;
+    });
+    // 滚到最底时最后一节不可能再滚过判定线，单独兜一下，
+    // 否则点「常见问题」跳过去、目录还停在上一项
+    const doc = document.documentElement;
+    if ((window.scrollY || doc.scrollTop || 0) + window.innerHeight >= doc.scrollHeight - 24) {
+      cur = links[links.length - 1];
+    }
+    links.forEach(a => a.classList.toggle('active', a === cur));
   }
 
   /* 图片/占位：有缩略图立即显示，没有则占位并在进入视口时按需生成
@@ -755,11 +781,26 @@ const VIEWS = (() => {
       });
     }
     let topRaf = 0;
+    // 帮助页左侧目录：用 scrollIntoView 而不是改 hash，
+    // 免得多出一条 #help-xxx 的历史记录
+    document.querySelectorAll('.help-toc a').forEach(a => {
+      a.addEventListener('click', e => {
+        e.preventDefault();
+        const target = document.getElementById(String(a.getAttribute('href') || '').slice(1));
+        if (!target) return;
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        // 平滑滚动的最后一次 scroll 事件不一定落在终点，补一次收尾刷新，
+        // 否则点完「常见问题」目录可能还停在上一项
+        setTimeout(updateHelpToc, 650);
+      });
+    });
     window.addEventListener('scroll', () => {
       if (topRaf) return;
-      topRaf = requestAnimationFrame(() => { topRaf = 0; updateBackTop(); });
+      topRaf = requestAnimationFrame(() => { topRaf = 0; updateBackTop(); updateHelpToc(); });
     }, { passive: true });
-    window.addEventListener('resize', updateBackTop);
+    window.addEventListener('resize', () => { updateBackTop(); updateHelpToc(); });
+    // 平滑滚动／惯性滚动结束时补一次：滚动的最后一个 scroll 事件不一定落在终点
+    window.addEventListener('scrollend', updateHelpToc, { passive: true });
     document.addEventListener('keydown', e => {
       if ($('#lightbox').classList.contains('hidden')) return;
       // 输入框里打字时不触发快捷键（顶栏筛选之外的场景很少，但别误伤）

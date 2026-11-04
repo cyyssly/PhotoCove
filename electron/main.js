@@ -57,6 +57,8 @@ const SHOT_VIEW = (() => {
   const i = ARGV.indexOf('--view');
   return i >= 0 && ARGV[i + 1] ? ARGV[i + 1] : '';
 })();
+/* 截整页长图（默认只截可视区），用来核对帮助文档这类长页面 */
+const SHOT_FULL = ARGV.includes('--full');
 /* 开发用：--eval <文件> 在真实页面里跑一段脚本并打印结果。
  * 用来驱动界面做端到端验证（点按钮、开面板、截图），打包后不生效。 */
 const EVAL = (() => {
@@ -616,7 +618,13 @@ function createWindow() {
     },
   });
 
-  mainWin.once('ready-to-show', () => { if (!SELFTEST && !SHOT) mainWin.show(); });
+  mainWin.once('ready-to-show', () => {
+    if (!SELFTEST && !SHOT) mainWin.show();
+    // 截图模式也必须真的显示出来：show:false 的窗口不产生新合成帧，
+    // capturePage 只会返回旧画面（改动过的 DOM 反映不出来），
+    // 而 Page.captureScreenshot 会一直等不到帧、把进程挂住。
+    else if (SHOT) mainWin.showInactive();
+  });
   mainWin.on('closed', () => { mainWin = null; });
 
   // 不给页面开新窗口的机会；外链一律交给系统浏览器
@@ -701,14 +709,43 @@ async function runEval(file) {
     result = { ok: false, error: 'executeJavaScript 失败：' + (e && e.message ? e.message : e) };
   }
   console.log('EVAL_RESULT ' + JSON.stringify(result, null, 2));
-  if (SHOT) {
-    try {
-      const img = await mainWin.webContents.capturePage();
-      fs.writeFileSync(SHOT, img.toPNG());
-      console.log('SHOT_OK ' + SHOT);
-    } catch (e) { console.log('SHOT_FAIL ' + (e && e.message)); }
-  }
+  if (SHOT) await shootPage(SHOT);
   setTimeout(() => app.exit(result && result.ok ? 0 : 1), 150);
+}
+
+/* 截图。优先走 DevTools 协议的 Page.captureScreenshot：
+ * capturePage() 返回的是「最后一次合成帧」，窗口在后台（或刚滚动过、刚改过 DOM）
+ * 时拿到的还是改动前的画面——实测滚动到底和 display:none 都反映不出来，
+ * 很容易对着旧图误判。走 debugger 会按当前 DOM 重新渲染。
+ * --full 时连可视区外的部分一起截，便于核对长页面。 */
+async function shootPage(file, fullPage) {
+  const wc = mainWin.webContents;
+  let attachedHere = false;
+  try {
+    if (!wc.debugger.isAttached()) { wc.debugger.attach('1.3'); attachedHere = true; }
+    const params = { format: 'png', fromSurface: true };
+    if (fullPage === undefined ? SHOT_FULL : fullPage) params.captureBeyondViewport = true;
+    // 窗口没有新帧时这条命令不会返回，必须自带超时，否则整个进程挂死
+    const data = await Promise.race([
+      wc.debugger.sendCommand('Page.captureScreenshot', params).then(r => r && r.data),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('captureScreenshot 超时')), 5000).unref()),
+    ]);
+    fs.writeFileSync(file, Buffer.from(data, 'base64'));
+    if (attachedHere) wc.debugger.detach();
+    console.log('SHOT_OK ' + file);
+    return true;
+  } catch (e) {
+    console.log('SHOT_DEBUGGER_FAIL ' + (e && e.message));
+    try {
+      const img = await wc.capturePage();
+      fs.writeFileSync(file, img.toPNG());
+      console.log('SHOT_OK ' + file + ' (capturePage 回退)');
+      return true;
+    } catch (e2) {
+      console.log('SHOT_FAIL ' + (e2 && e2.message));
+      return false;
+    }
+  }
 }
 
 /* ============ 11. 生命周期 ============ */
@@ -777,12 +814,8 @@ if (!app.requestSingleInstanceLock()) {
           }
         }
         try {
-          const img = await mainWin.webContents.capturePage();
-          fs.writeFileSync(SHOT, img.toPNG());
-          console.log('SHOT_OK ' + SHOT);
-        } catch (e) {
-          console.log('SHOT_FAIL ' + (e && e.message));
-        }
+          await shootPage(SHOT);
+        } catch (e) { console.log('SHOT_FAIL ' + (e && e.message)); }
         if (SELFTEST_DIR) {
           // 截图用的临时目录记录留在库里会碍事，清掉
           try {

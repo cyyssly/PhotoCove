@@ -1,6 +1,6 @@
 {
   "name": "photocove",
-  "version": "19.0.0",
+  "version": "20.0.0",
   "private": true,
   "description": "PhotoCove — 本地摄影作品展示站（Electron 桌面应用）",
   "author": {

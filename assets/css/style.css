@@ -188,13 +188,10 @@ a { color: var(--accent); }
 
 /* ============ 设置页 ============ */
 .settings-wrap { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 16px; }
-.notice, .settings-card {
+.settings-card {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 10px; padding: 16px 20px;
 }
-.notice summary { cursor: pointer; font-weight: 600; color: var(--accent); }
-.notice ul { margin: 12px 0 4px 18px; font-size: 13.5px; line-height: 1.9; color: var(--text-dim); }
-.notice b { color: var(--text); }
 .settings-card h3 { font-size: 15.5px; margin-bottom: 12px; }
 .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 8px 0; }
 .settings-sub { display: block; font-size: 12px; color: var(--text-dim); margin-top: 3px; max-width: 420px; }
@@ -721,3 +718,111 @@ body.modal-open { overflow: hidden; }
 .gps-log-line.ok { color: var(--ok); }
 .gps-log-line.warn { color: var(--warn); }
 .gps-log-line.err { color: var(--danger); }
+
+/* ============ 帮助页 ============
+ * 说明文档与原来设置页的「使用须知」合并成一页：左边常驻目录、右边卡片正文。
+ * 正文用滚动定位，顶部留出 sticky 顶栏的高度，否则标题会被盖住。 */
+.help-wrap {
+  max-width: 980px; margin: 0 auto;
+  display: grid; grid-template-columns: 188px minmax(0, 1fr);
+  gap: 26px; align-items: start;
+}
+.help-toc {
+  position: sticky; top: 74px;
+  display: flex; flex-direction: column; gap: 1px;
+  font-size: 13px; padding-top: 2px;
+}
+.help-toc-title {
+  font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--text-dim); opacity: .75; padding: 0 10px 8px;
+}
+.help-toc a {
+  color: var(--text-dim); text-decoration: none;
+  padding: 6px 10px; border-radius: 6px;
+  border-left: 2px solid transparent;
+  transition: color .14s, background .14s, border-color .14s;
+}
+.help-toc a:hover { color: var(--text); background: var(--bg-card); }
+.help-toc a.active { color: var(--accent); border-left-color: var(--accent); background: var(--accent-dim); }
+.help-toc-foot { margin-top: 14px; padding: 0 10px; font-size: 11.5px; color: var(--text-dim); opacity: .6; }
+
+.help-body { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.help-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 18px 22px 20px;
+  scroll-margin-top: 74px;
+}
+.help-card h2 { font-size: 15.5px; margin-bottom: 10px; }
+.help-card h3 { font-size: 13.5px; margin: 16px 0 6px; color: var(--text); }
+.help-card p { font-size: 13.5px; line-height: 1.85; color: var(--text-dim); }
+.help-card p + p { margin-top: 6px; }
+.help-card b { color: var(--text); }
+.help-card ul, .help-card ol { margin: 6px 0 4px 20px; font-size: 13.5px; line-height: 1.9; color: var(--text-dim); }
+.help-card li { margin-bottom: 2px; }
+.help-card code {
+  padding: 1px 5px; border-radius: 4px; background: var(--bg-elev);
+  color: var(--text); font-family: Consolas, monospace; font-size: 12px;
+}
+
+.help-table { width: 100%; border-collapse: collapse; margin: 2px 0 8px; font-size: 13px; }
+.help-table th, .help-table td {
+  text-align: left; padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-dim); vertical-align: top;
+}
+.help-table th { color: var(--text); font-weight: 600; font-size: 12px; white-space: nowrap; }
+.help-table tr:last-child td { border-bottom: none; }
+.help-table td:first-child { color: var(--text); white-space: nowrap; }
+
+.help-steps { list-style: decimal; }
+.help-note {
+  margin-top: 10px !important; padding: 9px 12px;
+  border-left: 2px solid var(--accent-dim); border-radius: 0 6px 6px 0;
+  background: var(--bg-elev); font-size: 12.5px !important; line-height: 1.75 !important;
+}
+
+/* 快捷键：左列等宽放按键，右列放说明 */
+.help-card .help-keys { list-style: none; margin: 8px 0 4px 0; }
+.help-keys li {
+  display: grid; grid-template-columns: 132px minmax(0, 1fr);
+  gap: 12px; align-items: start; padding: 3px 0;
+}
+.help-keys .keys { display: flex; flex-wrap: wrap; gap: 4px; }
+.help-card kbd {
+  display: inline-block; min-width: 22px; padding: 1px 6px;
+  border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 5px;
+  background: var(--bg-elev); color: var(--text);
+  font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.7;
+  text-align: center; white-space: nowrap;
+}
+
+.help-faq { border-top: 1px solid var(--border); padding: 9px 0 3px; }
+.help-faq:first-of-type { border-top: none; padding-top: 0; }
+.help-faq summary {
+  cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--text);
+  list-style: none; display: flex; align-items: baseline; gap: 8px;
+}
+.help-faq summary::-webkit-details-marker { display: none; }
+.help-faq summary::before {
+  content: '▸'; color: var(--accent); font-size: 11px;
+  transition: transform .15s; transform-origin: center;
+}
+.help-faq[open] summary::before { transform: rotate(90deg); }
+.help-faq summary:hover { color: var(--accent); }
+.help-faq p { margin: 7px 0 5px 19px; font-size: 13px; }
+
+.help-sign {
+  text-align: center; font-size: 11.5px; color: var(--text-dim);
+  opacity: .65; padding: 2px 0 6px;
+}
+.settings-foot { margin-top: 14px; margin-bottom: 0; }
+.settings-foot a { color: var(--accent); text-decoration: none; }
+.settings-foot a:hover { text-decoration: underline; }
+
+@media (max-width: 900px) {
+  .help-wrap { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .help-toc { position: static; flex-direction: row; flex-wrap: wrap; gap: 4px; padding: 0; }
+  .help-toc-title, .help-toc-foot { display: none; }
+  .help-toc a { border-left: none; border-bottom: 2px solid transparent; }
+  .help-toc a.active { border-bottom-color: var(--accent); }
+}
