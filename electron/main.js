@@ -25,9 +25,17 @@ if (!app || typeof app.whenReady !== 'function') {
   process.exit(1);
 }
 
-/* 站点根目录 = electron/ 的上一层 */
+/* 站点根目录 = electron/ 的上一层。打包后它位于 app.asar 内，
+ * 只用来读网页资源（Electron 的 fs 补丁能透明读取 asar），不能当工作目录。 */
 const APP_DIR = path.resolve(__dirname, '..');
-const DATA_DIR = path.join(APP_DIR, 'data');
+
+/* 程序根目录 = PhotoCove.exe 所在目录（dev 下就是项目根）。
+ * data\ 和 GPSStamp\ 必须放在这里，不能放 asar 里：
+ *   1. asar 是只读归档，IndexedDB 写不进去；
+ *   2. 也不能把 asar 内的 .bat 路径交给 cmd.exe，它打不开归档文件。
+ * 放 exe 旁边还有个好处：整个文件夹拷走，索引和缩略图跟着走（保持绿色）。 */
+const EXE_DIR = app.isPackaged ? path.dirname(process.execPath) : APP_DIR;
+const DATA_DIR = path.join(EXE_DIR, 'data');
 const IS_WIN = process.platform === 'win32';
 
 /* dev 下 argv = [electron.exe, '.', ...自定义参数]；打包后 argv = [PhotoCove.exe, ...自定义参数] */
@@ -67,6 +75,9 @@ protocol.registerSchemesAsPrivileged([
 function toFsPath(p) {
   if (!IS_WIN || typeof p !== 'string' || !p) return p;
   const abs = path.resolve(p);
+  // asar 内的路径绝不能加 \\?\：Electron 靠识别路径里的 app.asar 段把它重定向到归档，
+  // 加了前缀就退化成普通文件路径，读出来的都是 ENOENT。
+  if (abs.includes('.asar' + path.sep) || abs.endsWith('.asar')) return abs;
   if (abs.length < 248) return abs;
   if (/^\\\\\?\\/.test(abs)) return abs;
   if (/^\\\\/.test(abs)) return '\\\\?\\UNC\\' + abs.slice(2);
@@ -189,11 +200,14 @@ async function walkDir(root) {
   return out;
 }
 
-/* ============ 6. GPSStamp ============ */
+/* ============ 6. GPSStamp ============
+ * 依次在「exe 旁边 → 上一级 → 站点根」找。打包后 GPSStamp\ 由 electron-builder
+ * 的 extraFiles 放到 exe 同级；dev 下就在项目根。 */
 function findGpsStamp() {
   const cands = [
+    path.join(EXE_DIR, 'GPSStamp', 'GPSStamp.bat'),
+    path.join(path.dirname(EXE_DIR), 'GPSStamp', 'GPSStamp.bat'),
     path.join(APP_DIR, 'GPSStamp', 'GPSStamp.bat'),
-    path.join(path.dirname(APP_DIR), 'GPSStamp', 'GPSStamp.bat'),
   ];
   for (const c of cands) {
     try { if (fs.existsSync(c)) return c; } catch (e) { /* ignore */ }
@@ -233,6 +247,8 @@ function registerIpc() {
     chrome: process.versions.chrome,
     platform: process.platform,
     appDir: APP_DIR,
+    exeDir: EXE_DIR,
+    dataDir: DATA_DIR,
     userData: app.getPath('userData'),
     packaged: app.isPackaged,
     gpsstamp: findGpsStamp(),

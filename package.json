@@ -3,12 +3,66 @@
   "version": "18.0.0",
   "private": true,
   "description": "PhotoCove — 本地摄影作品展示站（Electron 桌面应用）",
+  "author": {
+    "name": "SLY"
+  },
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",
-    "selftest": "electron . --selftest --dir ."
+    "selftest": "electron . --selftest --dir .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --win --x64"
   },
   "devDependencies": {
-    "electron": "^45.2.2"
+    "electron": "^45.2.2",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.sly.photocove",
+    "productName": "PhotoCove",
+    "copyright": "Copyright © 2026 SLY",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "asar": true,
+    "compression": "normal",
+    "files": [
+      "index.html",
+      "js/**/*",
+      "assets/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraFiles": [
+      {
+        "from": "GPSStamp",
+        "to": "GPSStamp",
+        "filter": [
+          "**/*",
+          "!settings.ini",
+          "!data/**"
+        ]
+      },
+      {
+        "from": "README.md",
+        "to": "README.md"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "dir",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "electronLanguages": [
+      "zh-CN",
+      "en-US"
+    ]
   }
 }

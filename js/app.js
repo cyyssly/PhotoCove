@@ -203,6 +203,10 @@
   async function renderDirList() {
     const dirs = await DB.listDirs();
     _dirsCache = dirs;
+    // 列表要画「可读取 / 不可用」的徽章，而可读性结论在 readableMap 里。
+    // 新加入的目录若还没进这张表，先补一次，否则会先画成「不可用」、
+    // 再被状态条纠正成「可正常读取」，同一屏给出两个相反结论。
+    if (dirs.some(d => !readableMap.has(d.id))) await refreshReadable(dirs);
     const counts = await DB.countPhotosByDir();
     const ul = $('#dir-list');
     ul.innerHTML = '';
@@ -449,6 +453,16 @@
   /* ============ 设置页其余控件 ============ */
   function bindSettings() {
     $('#add-dir').addEventListener('click', addDirectory);
+
+    /* 每次进设置页都重算一次目录状态与占用：
+     * 文件夹可能在程序没运行时被改名、移动或拔了盘，页面不能一直显示上次会话的「可读取」。 */
+    const navSettings = document.querySelector('.nav-btn[data-view="settings"]');
+    if (navSettings) {
+      navSettings.addEventListener('click', () => {
+        renderDirList().catch(() => {});
+        renderStorageInfo().catch(() => {});
+      });
+    }
 
     // 扫描浮卡：取消按钮
     $('#sw-cancel').addEventListener('click', () => {

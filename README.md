@@ -9,6 +9,10 @@
 
 ## 启动
 
+**已打包的绿色版**：双击 `dist\win-unpacked\PhotoCove.exe`。不需要 Node，也不需要 `npm install`；整个 `win-unpacked` 文件夹可以直接拷到别的电脑上用，`data\` 随文件夹一起搬走。
+
+**从源码运行**（开发用）：
+
 ```bat
 npm install          :: 只需一次
 启动 PhotoCove.bat    :: 之后双击这个
@@ -61,17 +65,38 @@ GPSStamp 是独立小工具，也可以单独使用，见 `GPSStamp\使用说明
 ## 已知限制
 
 - **HEIC 缩略图不行**：Chromium 内核不解 HEIC，Electron 也一样，除非引入 libheif。RAW 走的是机内嵌 JPEG 预览，不受影响
-- **尚未打包**：现在依赖 `node_modules`（约 357 MB），分发前需要 `electron-builder` 打成绿色目录
+- **没有代码签名**：exe 首次运行时 Windows SmartScreen 会拦一次（「更多信息 → 仍要运行」）。签名证书要按年付费，个人使用不值当；同一台机器放行一次后不再提示
 - 首次扫描要为每张照片读一段文件头，两万张的量级下耗时以分钟计，之后都走增量（比对 `size` + `mtime`）
 - 地图页一次最多列 200 张无位置照片，避免套图/截图过多时建节点卡顿
+
+## 打包与分发
+
+```bat
+npm run dist        :: 产出 dist\win-unpacked\ ，免安装的绿色目录
+```
+
+配置在 `package.json` 的 `build` 字段里，产物约 311 MB（其中 238 MB 是 Electron 运行时本体）：
+
+| 产物 | 说明 |
+|---|---|
+| `PhotoCove.exe` | 主程序，版本号、产品名、图标都已写进 exe 资源 |
+| `resources\app.asar` | 网页资源（HTML/CSS/JS/vendor），2 MB |
+| `GPSStamp\` | 放在 exe 同级，地图页点文件夹时直接启动；不含本机的 `settings.ini` |
+| `data\` | 首次运行自动创建，索引与缩略图在这里 |
+
+打包后 `data\` 和 `GPSStamp\` 必须待在 exe 旁边（`app.asar` 是只读归档，既写不进数据，也没法把里面的 `.bat` 交给 cmd 执行），主进程里用 `EXE_DIR` 区分「网页资源根」与「程序根」。
+
+只保留了 `zh-CN` / `en-US` 两种 Chromium 语言包；不做安装包（NSIS）——绿色目录更符合这个工具的使用方式，换机器直接拷文件夹。
 
 ## 目录结构
 
 ```
 PhotoCove/
 ├── index.html              # 唯一入口
-├── package.json
+├── package.json            # 含 electron-builder 配置
 ├── 启动 PhotoCove.bat       # 双击启动（未打包状态）
+├── build/                  # 打包资源（icon.ico）
+├── dist/                   # 打包产物（不进版本库）
 ├── electron/
 │   ├── main.js             # 窗口、app:// 与 covefile:// 协议、IPC、单实例
 │   ├── preload.js          # contextBridge 白名单，页面拿不到 Node
@@ -101,6 +126,12 @@ node_modules\electron\dist\electron.exe . --selftest --dir "F:\01照片\某个�
 会隐藏窗口跑完整链路：建目录记录 → 扫描 → 解析尺寸与 EXIF → 生成缩略图 → 用 `covefile://` 取原图并比对字节数 → 二次扫描验证增量为零。结果打到 stdout，退出码表示成败，临时数据跑完自动清掉。
 
 **别指到整个图库**：自测有 120 秒上限，三万张会超时；指一个几十张的子目录就够。
+
+打包后同样能自测，用来确认 asar 内的资源与 exe 同级的 `GPSStamp\` 都找得到：
+
+```bat
+dist\win-unpacked\PhotoCove.exe --selftest --dir "F:\01照片\某个子目录"
+```
 
 ## 技术要点
 
