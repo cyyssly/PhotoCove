@@ -1,4 +1,4 @@
-# 依赖与构建产物（不要提交，GitHub Pages 也不需要）
+# 依赖与构建产物（不提交；打包后的绿色目录由 electron-builder 产出）
 node_modules/
 dist/
 data/

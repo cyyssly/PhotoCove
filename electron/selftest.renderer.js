@@ -22,10 +22,13 @@ async function (dir) {
       await wait(50);
     }
 
-    check('适配层实现是 desktop', PLATFORM.kind === 'desktop', PLATFORM.kind);
-    check('isDesktop', PLATFORM.isDesktop === true);
-    check('isSupported', PLATFORM.isSupported === true);
-    info.kind = PLATFORM.kind;
+    // 磁盘访问层就绪 + 引导层没有误判（上一版这里查的是 PLATFORM.kind/isDesktop，
+    // 那两个字段随网页版一起删掉了）
+    const api = ['pickDirectory', 'newDirRecord', 'isSameDir', 'queryPermission',
+      'walk', 'resolveFile', 'openFile', 'imageUrl', 'launchGpsStamp'];
+    const missing = api.filter(k => typeof PLATFORM[k] !== 'function');
+    check('磁盘访问层方法齐全', missing.length === 0, '缺 ' + missing.join(', '));
+    check('未落入浏览器引导层', !document.body.classList.contains('gated'));
     info.info = await window.__COVE_DESKTOP.info();
 
     // ---- 1. 建目录记录（桌面端直接带绝对路径） ----
@@ -124,15 +127,18 @@ async function (dir) {
   } catch (e) {
     return { ok: false, failed, info, error: (e && e.stack) || String(e) };
   } finally {
-    // 自测数据不留在用户库里
+    // 自测数据不留在用户库里；顺带扫掉以前被中断（超时/崩溃）留下的同类残留，
+    // 否则设置页会多出几个名字奇怪的目录行。
     try {
-      if (dirId != null) {
-        const photos = (await DB.allPhotos()).filter(p => p.dirId === dirId);
-        for (const p of photos) {
+      const dirs = await DB.listDirs();
+      for (const d of dirs) {
+        if (d.id !== dirId && !/^__(selftest|shot)__/.test(d.name || '')) continue;
+        const ps = (await DB.allPhotos()).filter(p => p.dirId === d.id);
+        for (const p of ps) {
           try { await DB.deleteAssets(p.id); } catch (e) { /* ignore */ }
           try { await DB.deletePhoto(p.id); } catch (e) { /* ignore */ }
         }
-        await DB.removeDir(dirId);
+        await DB.removeDir(d.id);
       }
       await wait(50);
     } catch (e) { /* ignore */ }

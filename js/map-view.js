@@ -6,8 +6,7 @@
  *
  * v14（M2）：悬停气泡内嵌缩略图；提供 focus() 供「照片 → 地图」定位；
  *           无 GPS 照片从"消失"变为可点开的独立列表。
- * v15：无 GPS 列表改为按文件夹聚合，点文件夹用 gpsstamp:// 唤起 GPSStamp
- *      补坐标（需要该图片库在设置里填过「本机路径」）。
+ * v15：无 GPS 列表改为按文件夹聚合，点文件夹直接唤起本机的 GPSStamp 补坐标。
  */
 'use strict';
 
@@ -287,7 +286,7 @@ const MAPVIEW = (() => {
     else console.log('[map]', msg);
   }
 
-  /* 目录记录只在需要时取一次；授权/移除/设置路径后靠 force 或过期刷新 */
+  /* 目录记录只在需要时取一次；增删目录后靠 force 或过期刷新 */
   function refreshDirs(force) {
     if (typeof DB === 'undefined') return;
     if (!force && _dirs.length && Date.now() - _dirsAt < 30000) return;
@@ -397,19 +396,15 @@ const MAPVIEW = (() => {
     });
   }
 
-  /* 点文件夹：补全本机路径 → 用 gpsstamp:// 唤起 GPSStamp */
+  /* 点文件夹：拼出本机绝对路径 → 直接唤起 GPSStamp */
   async function openFolder(g) {
     const d = dirOf(g.dirId);
     if (!d) { toast('找不到该图片库记录，请回设置页刷新后重试'); return; }
     if (typeof APP === 'undefined' || !APP) { toast('页面脚本还没就绪，请稍后再试'); return; }
 
-    let base = APP.normDir(d.path);
-    if (!base) {
-      base = await APP.askDirPath(d);   // 第一次点会问一次，之后记住
-      if (!base) return;
-    }
-    const full = APP.joinPath(base, g.folder);
-    APP.launchGpsStamp(full);
+    const base = APP.normDir(d.path);
+    if (!base) { toast('该图片库记录里没有本机路径，请到设置页「移除」后重新添加'); return; }
+    APP.launchGpsStamp(APP.joinPath(base, g.folder));
   }
 
   function toggleNoGps() {

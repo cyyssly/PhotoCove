@@ -112,7 +112,7 @@ const VIEWS = (() => {
 
   /* 图片/占位：有缩略图立即显示，没有则占位并在进入视口时按需生成
    * failReason：已知的失败原因（由懒加载回调传入），有值时直接渲染提示，不再排队重试。
-   * 之前这里会把授权失败的元素重新塞回观察队列，元素本来就可见 → 立刻再次触发 →
+   * 之前这里会把目录读不到的元素重新塞回观察队列，元素本来就可见 → 立刻再次触发 →
    * 无限循环，把主线程和 IndexedDB 读请求全占满，表现为"只出来几张，其余永远空白"。 */
   function fillMedia(el, p, cover, failReason) {
     const old = el.querySelector('img, .ph');
@@ -133,12 +133,12 @@ const VIEWS = (() => {
       return;
     }
 
-    // 已知失败原因（授权缺失 / 解码失败 / 超时 / 文件缺失）：给出可点击重试的占位
+    // 已知失败原因（目录读不到 / 解码失败 / 超时 / 文件缺失）：给出可点击重试的占位
     const fail = failReason || (SCAN.isFailed(p.id) ? SCAN.failedReason(p.id) : null);
     if (fail) {
       ph.classList.add('ph-fail');
       ph.textContent = fail === 'permission' || fail === 'no-handle'
-        ? '需要目录授权'
+        ? '目录读不到'
         : (fail === 'timeout' ? '加载超时 · 点击重试' : '加载失败 · 点击重试');
       el.appendChild(ph);
       if (fail !== 'permission' && fail !== 'no-handle') {
@@ -180,7 +180,7 @@ const VIEWS = (() => {
       lazyIO.unobserve(en.target);
       lazyWaiters.delete(en.target);
       const { p, cover } = rec;
-      // 失败时也要回到 fillMedia，由它渲染「点击重试 / 需要授权」占位，
+      // 失败时也要回到 fillMedia，由它渲染「点击重试 / 目录读不到」占位，
       // 否则元素会停在一个没有任何反馈的空占位上
       SCAN.ensureAssets(p, 'thumb')
         .catch(() => null)
@@ -618,7 +618,7 @@ const VIEWS = (() => {
     if (p.date) parts.push(fmtDate(p.date));
     if (p.width && p.height) parts.push(`<span class="exif-dim">${p.width}×${p.height}</span>`);
     if (!p.isRaw && assets && assets.useOriginal) parts.push('<span class="exif-dim">原图直出</span>');
-    if (assets && assets.error === 'permission') parts.push('<span class="exif-dim">需要目录授权</span>');
+    if (assets && assets.error === 'permission') parts.push('<span class="exif-dim">目录读不到</span>');
     else if (assets && assets.error && assets.error !== 'raw-off') parts.push('<span class="exif-dim">预览生成失败</span>');
     if (p.isRaw) parts.push(`<span class="exif-dim">RAW·机内预览</span>`);
     $('#lb-info').innerHTML = parts.filter(Boolean).join('<span class="exif-dim"> ｜ </span>');

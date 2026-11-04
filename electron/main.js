@@ -6,7 +6,7 @@
  *   3. 用 covefile:// 协议直接流式读原图，避免把几十 MB 的照片搬进 JS 堆
  *   4. 把用户数据（IndexedDB）放在程序目录的 data\ 下，保持绿色便携
  *
- * 页面本身一行都不用为此改写：所有平台差异都在 js/platform/desktop.js 里吸收。
+ * 页面本身一行都不用为此改写：所有磁盘访问差异都在 js/platform.js 里吸收。
  */
 'use strict';
 

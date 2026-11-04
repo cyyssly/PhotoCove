@@ -1,8 +1,8 @@
 {
   "name": "photocove",
-  "version": "17.0.0",
+  "version": "18.0.0",
   "private": true,
-  "description": "PhotoCove — 本地摄影作品展示站（浏览器版 + Electron 桌面版）",
+  "description": "PhotoCove — 本地摄影作品展示站（Electron 桌面应用）",
   "main": "electron/main.js",
   "scripts": {
     "start": "electron .",

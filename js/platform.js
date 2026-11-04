@@ -1,10 +1,14 @@
-/* platform/desktop.js — 桌面壳（Electron）实现
+/* js/platform.js — 磁盘访问层（Electron 桌面壳）
  *
- * 与 web.js 的差别只有来源：
- *   浏览器：目录句柄 + 每次启动重新授权，拿不到绝对路径；
- *   桌面壳：绝对路径 + 直接读盘，没有授权概念。
+ * 业务代码（scanner / app / views / map-view）不直接碰 fs，也不碰 IPC，
+ * 只经过这里这几个方法：选目录、枚举、读文件、问"这个目录还能读吗"。
  *
- * 这里有两处刻意的取舍，都不是随手写的：
+ * 为什么单独一层：Electron 的分层边界（主进程 fs ↔ preload 白名单 ↔ 页面）
+ * 需要有人收口，否则每个调用点都要自己拼绝对路径、自己做 IPC 错误映射。
+ * 这一层就是那个收口处，preload 暴露的能力（window.__COVE_DESKTOP）
+ * 在 electron/preload.js 里是白名单式的，页面拿不到 require。
+ *
+ * 两处刻意的取舍，都不是随手写的：
  *
  * 1) 扫描阶段只读文件开头 512KB（readHead），不整文件读。
  *    exifr 是按需切片读的，256KB 足够覆盖 JPEG 的 APP1（规范上限 64KB）
@@ -12,15 +16,22 @@
  *    要搬上百 GB 数据过 IPC，直接不可用。
  * 2) 真正要解码显示时才读整文件（openFile），而原图大图直接用 covefile://
  *    交给 Chromium 自己流式加载（imageUrl），不进 JS 堆。
+ *
+ * 关于 walk 的 size / lastModified：增量比对靠它，**必须**是文件的真实大小与修改时间，
+ * 不能是"读到的字节数"——扫描只读文件开头一小段，两者并不相等。
  */
 'use strict';
 
-(() => {
+const PLATFORM = (() => {
   const D = typeof window !== 'undefined' ? window.__COVE_DESKTOP : null;
-  if (!D) return;                       // 浏览器环境：什么都不做，等 web.js 注册
 
-  // 供 CSS 区分平台文案（使用须知里浏览器版与桌面版说的不是一回事）
-  try { document.documentElement.classList.add('is-desktop'); } catch (e) { /* ignore */ }
+  /* 不在桌面壳里（例如有人直接双击 index.html）：返回一组明确报错的空实现。
+   * 页面由 index.html 里的 gate 挡住，正常不会走到这里；留着是为了出错时有话说，
+   * 而不是抛一个 "Cannot read property of null"。 */
+  if (!D) {
+    const fail = () => { throw new Error('PhotoCove 需要在桌面窗口里运行'); };
+    return new Proxy({}, { get: () => fail });
+  }
 
   const HEAD_BYTES = 512 * 1024;
 
@@ -50,9 +61,8 @@
     return MIME_BY_EXT[ext] || '';
   }
 
-  /* 目录存在性：桌面端没有「授权」这回事，目录读不到就只有两种可能——
-   * 盘没插 / 被改名删掉了。统一当作 denied，让界面提示"目录不可用"，
-   * 而不是让扫描跑到一半抛一堆错。 */
+  /* 目录可读性：这里没有"授权"这回事，读不到只有两种可能——盘没插 / 被改名删掉了。
+   * 统一当作 denied，让界面提示"目录不可用"，而不是让扫描跑到一半抛一堆错。 */
   async function queryPermission(dir) {
     if (!dir || !dir.path) return 'denied';
     try { return (await D.exists(dir.path)) ? 'granted' : 'denied'; }
@@ -98,19 +108,14 @@
     };
   }
 
-  PLATFORM.register({
-    kind: 'desktop',
-    isDesktop: true,
-    isSupported: true,
-
+  return {
+    /* 选目录：系统对话框，顺便就拿到绝对路径，直接进目录记录 */
     async pickDirectory() {
       const picked = await D.pickDir();
       if (!picked || !picked.path) return null;
       return { name: picked.name, token: picked.path };
     },
 
-    /* 桌面端顺手就把绝对路径存进目录记录了，
-     * 网页版要用户手填的那一步（askDirPath）在这里不再需要。 */
     newDirRecord(picked) {
       return { name: picked.name, path: picked.token };
     },
@@ -122,11 +127,6 @@
     },
 
     queryPermission,
-
-    async requestPermission(dir) {
-      const p = await queryPermission(dir);
-      return { ok: p === 'granted', broken: p !== 'granted' };
-    },
 
     async walk(dir, onEntry) {
       if (!dir || !dir.path) throw new Error('目录记录里没有本机路径');
@@ -173,12 +173,9 @@
       return 'covefile://local/?p=' + encodeURIComponent(join(dir.path, relPath));
     },
 
-    /* 桌面端直接起进程，不需要 gpsstamp:// 协议，也不会有「是否打开」的二次确认 */
+    /* 直接起进程，不需要自定义协议，也不会有「是否打开」的二次确认 */
     async launchGpsStamp(folder) {
       return D.launchGpsStamp(folder);
     },
-
-    /* 桌面壳的数据在程序自己的目录里，不存在被浏览器回收的问题 */
-    async ensurePersistentStorage() { return true; },
-  });
+  };
 })();

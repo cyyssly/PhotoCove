@@ -1,8 +1,8 @@
 /* electron/preload.js — 渲染进程与主进程之间唯一的一道门
  *
  * 只暴露下面这些白名单方法，页面拿不到 require、拿不到 ipcRenderer、
- * 也没有任意文件访问能力（只能读页面自己传进来的路径，与网页版权限等价）。
- * 页面侧由 js/platform/desktop.js 包装成适配层实现。
+ * 也没有任意文件访问能力（只能读页面自己传进来的路径）。
+ * 页面侧由 js/platform.js 包装成磁盘访问层。
  */
 'use strict';
 

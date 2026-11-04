@@ -22,8 +22,8 @@ const SCAN = (() => {
 
   function setRawEnabled(v) { _rawEnabled = !!v; }
 
-  /* dirId -> 目录记录。扫描开始、目录增删、授权变化时失效。
-   * 以前只缓存句柄，现在缓存整条记录：桌面端的记录里没有句柄，只有本机路径。 */
+  /* dirId -> 目录记录。扫描开始、目录增删、可读性变化时失效。
+   * 缓存的是整条记录：里面有本机路径，拼绝对路径和查目录都要用它。 */
   let _dirCache = null;
   function resetDirCache() { _dirCache = null; }
 
@@ -82,10 +82,9 @@ const SCAN = (() => {
     return _previewLong;
   }
 
-  /* ---- 目录访问一律走适配层（js/platform/*）----
-   * 本文件不再直接调用 File System Access API，也不再持有目录句柄：
-   * 浏览器给的是句柄，桌面壳给的是绝对路径，差异全部由适配层吸收。
-   * 换壳时这里一行都不用改。 */
+  /* ---- 磁盘访问一律走 js/platform.js ----
+   * 本文件不直接碰 fs/IPC，也不拼绝对路径：
+   * 选目录、枚举、读文件、查目录是否可读，全部由那一层收口。 */
   async function dirPermission(dir) {
     try { return await PLATFORM.queryPermission(dir); }
     catch (e) { return 'denied'; }
@@ -455,7 +454,7 @@ const SCAN = (() => {
 
   /* 失败记录（仅内存，不落库）：
    * 解码失败/超时/文件缺失都是临时性的，绝不能写成永久状态——
-   * 一旦落库成 unavailable，授权恢复或文件修好后也不会再重试，照片就永远空白。 */
+   * 一旦落库成 unavailable，目录恢复可读或文件修好后也不会再重试，照片就永远空白。 */
   const _failed = new Map();   // id -> { at, error }
   function isFailed(id) { return _failed.has(id); }
   function failedReason(id) { const v = _failed.get(id); return v ? v.error : null; }
@@ -478,7 +477,7 @@ const SCAN = (() => {
    * 取用顺序：内存 LRU → IndexedDB assets → 现解码并回写
    * 成功：{ thumb, preview, useOriginal, width, height }
    * 失败：{ error, retryable } ／ null
-   *   error='permission' 表示目录未授权，属临时状态，调用方应提示并等待授权后重试 */
+   *   error='permission' 表示目录当前读不到（盘没插、或被改名移动），属临时状态，调用方应提示重试 */
   function ensureAssets(p, kind = 'thumb') {
     const wantPreview = kind === 'preview';
 
@@ -540,7 +539,7 @@ const SCAN = (() => {
         if (out.__timeout) return markFail(p, 'timeout');
         if (out.ok === false) {
           if (out.error === 'permission' || out.error === 'no-handle') {
-            // 授权没恢复：不写任何状态、不落库，等用户点「授权」后自动重试
+            // 目录仍读不到：不写任何状态、不落库，恢复后自动重试
             return { error: 'permission', retryable: true };
           }
           if (out.error === 'raw-off') return markFail(p, 'raw-off');

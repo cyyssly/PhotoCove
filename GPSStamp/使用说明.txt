@@ -31,9 +31,6 @@ GPSStamp.bat   启动器，双击这个
 GPSStamp.ps1   主程序，PowerShell + WinForms，无需安装、不写注册表
 settings.ini   设置文件，和程序放在一起（绿色、可随身带走）
                首次运行自动生成；坐标、目录、备份、语言、exiftool 位置都在里面
-注册联动.bat   一次性把 gpsstamp:// 协议指到本目录（当前用户，无需管理员）
-取消联动.bat   撤销上面那项注册（只删 HKCU\Software\Classes\gpsstamp）
-register.ps1 / unregister.ps1   上面两个 bat 实际调用的脚本
 
 依赖 exiftool：第一次找到后会记进 settings.ini 的 exiftool=，
 以后程序被移动位置也能用；找不到时按顺序查找
@@ -45,22 +42,11 @@ register.ps1 / unregister.ps1   上面两个 bat 实际调用的脚本
 本机当前用的是：E:\工具\图像&视频\ExifToolGUI\exiftool.exe
 
 【被 PhotoCove 唤起（联动）】
-
-两种方式，取决于你用的是网页版还是桌面版。两者都会只载入缺 GPS 的照片。
-
-A. PhotoCove 桌面版（Electron）—— 推荐，最省事
 1. 在 PhotoCove 地图页点左下角「N 张照片无位置信息」
 2. 面板按文件夹列出，点一个文件夹，GPSStamp 直接启动
    不需要注册协议，也不会弹「是否打开」的确认
 3. 程序内部用的是 --missing-only 参数，见下方说明
-
-B. PhotoCove 网页版（浏览器）
-1. 先运行一次「注册联动.bat」，只需一次，之后不用管
-2. 在 PhotoCove 地图页点左下角「N 张照片无位置信息」
-3. 面板按文件夹列出，点一个文件夹 → 浏览器问是否打开 GPSStamp
-   勾「始终允许」后，以后点击直接打开
-4. 若点击没反应：多半是协议没注册，重新运行「注册联动.bat」；
-   或在设置页确认该图片库填过「本机路径」
+   所以只会载入那个文件夹里缺 GPS 的照片，已有坐标的不会被覆盖
 
 【命令行参数】
   --missing-only <文件夹>   只把该文件夹里没有 GPS 的照片载入列表
@@ -73,7 +59,6 @@ B. PhotoCove 网页版（浏览器）
 内容：coord=坐标 / dir=上次目录 / backup=1 或 0 / lang=zh 或 en
       exiftool=exiftool.exe 的完整路径
 - 绿色做法：不写注册表、不写 APPDATA，整个文件夹拷走即可带走全部设置
-  （唯一的例外是联动协议，它必须写在注册表里，用「取消联动.bat」撤掉）
 - 想恢复默认：删掉 settings.ini，下次启动按系统语言重新生成
 - 例外：若程序放在只读位置（如 Program Files），无法写入，
   会自动回退到 %APPDATA%\GPSStamp\settings.ini
