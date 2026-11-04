@@ -31,6 +31,10 @@
   </nav>
   <div class="topbar-status">
     <span id="scan-status" class="scan-status"></span>
+    <!-- 深滚动后才出现的快捷返回入口（作品集/时间轴/相册集，超过 3 屏） -->
+    <button id="back-to-top" class="btn btn-small btn-ghost hidden" type="button" title="返回顶端">↑ 返回顶端</button>
+    <!-- 相册详情返回入口放在顶栏最右侧：滚到列表深处也能随时返回 -->
+    <button id="album-back" class="btn btn-small btn-ghost hidden" type="button" title="返回相册列表">← 返回相册列表</button>
   </div>
 </header>
 
@@ -68,7 +72,6 @@
   <section id="view-albums" class="view hidden">
     <div id="albums-grid" class="albums-grid"></div>
     <div id="album-detail" class="hidden">
-      <button id="album-back" class="btn btn-small">← 返回相册列表</button>
       <h2 id="album-title" class="album-title"></h2>
       <div id="album-grid" class="masonry"></div>
     </div>
@@ -79,10 +82,20 @@
   <section id="view-map" class="view hidden">
     <div id="map" class="map-container"></div>
     <div id="map-stats" class="map-stats hidden"></div>
+    <!-- 无 GPS 照片入口：点开面板仍可浏览这些照片，避免"照片凭空少了"的错觉 -->
+    <button id="map-nogps" class="map-nogps hidden" type="button">0 张照片无位置信息</button>
+    <aside id="map-nogps-panel" class="map-nogps-panel hidden">
+      <div class="map-nogps-head">
+        <span id="map-nogps-title">无位置信息</span>
+        <button id="map-nogps-close" class="map-nogps-close" type="button" title="关闭">×</button>
+      </div>
+      <div id="map-nogps-list" class="map-nogps-list"></div>
+      <p class="map-nogps-note">按文件夹聚合。点一下文件夹会用本机的 <b>GPSStamp</b> 打开它，并只载入其中没有 GPS 的照片，填一次坐标即可补齐。EXIF 里没有 GPS 的多见于老相机、截图或转发下载的图片，照片本身不受影响。</p>
+    </aside>
     <div id="map-empty" class="empty-state hidden">
       <div class="map-empty-card">
         <p>当前筛选条件下没有带位置信息的照片。</p>
-        <p>老相机、网络下载或未开启定位的照片通常不含 GPS；重新扫描目录后新照片才会记录位置。</p>
+        <p>老相机、网络下载或未开启定位的照片通常不含 GPS；左下角可查看这些照片。</p>
       </div>
     </div>
   </section>
@@ -108,7 +121,7 @@
         <!-- 隐私说明：线上地址只有一个，用户会担心本地照片被其他人看到 -->
         <div class="privacy-note">
           <b>照片不会上传，别人也看不到。</b>
-          本站只是一套网页程序，照片索引和缩略图只保存在<b>本机这个浏览器</b>里。
+          照片索引和缩略图只保存在<b>本机</b>：网页版存在本浏览器里，桌面版存在程序目录的 <b>data\</b> 文件夹。
           其他设备、其他浏览器，或别人打开同一个网址，看到的都是空白作品集，需要自己添加目录并扫描。
           原图始终留在你指定的文件夹中，扫描与缩略图生成都在本机完成，任何数据都不会离开这台电脑。
         </div>
@@ -151,18 +164,21 @@
           <span>存储状态<span class="settings-sub">本站缓存的缩略图与预览图占用的空间，原图不计入</span></span>
           <div id="storage-info" class="diag-info">检查中…</div>
         </div>
-        <p class="settings-hint">程序版本 v13。若界面行为与说明不符（常见于浏览器缓存了旧脚本），按 <b>Ctrl + F5</b> 强制刷新一次。</p>
+        <p class="settings-hint">程序版本 v17。<span class="web-only">若界面行为与说明不符（常见于浏览器缓存了旧脚本），按 <b>Ctrl + F5</b> 强制刷新一次。</span></p>
       </div>
 
       <!-- 使用须知 -->
       <details class="notice">
         <summary>使用须知（限制条件）</summary>
         <ul>
-          <li><b>浏览器要求</b>：仅支持 Edge / Chrome（需要文件系统访问 API），其他浏览器无法添加图片库。</li>
-          <li><b>访问授权</b>：浏览器不把这类权限长期保存，<b>完全退出浏览器</b>后再打开需要重新授权；按 F5 刷新页面<b>不会</b>重置权限，也不需要重新授权。授权入口有两处：设置页「图片库目录」上方的「授权全部目录」或每个目录右侧的「授权」按钮；未授权时页面顶部还会出现蓝色吸顶横幅，设置标签上有黄点提示。任何时候想确认当前状态，点授权条上的「重新检查」。想省掉这一步：在 Edge/Chrome 菜单里把本站安装为应用，安装后权限会被记住，双击图标即可直接使用。</li>
-          <li><b>数据存储</b>：缩略图和索引保存在本浏览器的本地数据库中，原图始终留在原目录，不会被移动或修改。</li>
+          <li class="web-only"><b>浏览器要求</b>：仅支持 Edge / Chrome（需要文件系统访问 API），其他浏览器无法添加图片库。</li>
+          <li class="web-only"><b>访问授权</b>：浏览器不把这类权限长期保存，<b>完全退出浏览器</b>后再打开需要重新授权；按 F5 刷新页面<b>不会</b>重置权限，也不需要重新授权。授权入口有两处：设置页「图片库目录」上方的「授权全部目录」或每个目录右侧的「授权」按钮；未授权时页面顶部还会出现蓝色吸顶横幅，设置标签上有黄点提示。任何时候想确认当前状态，点授权条上的「重新检查」。想省掉这一步：在 Edge/Chrome 菜单里把本站安装为应用，安装后权限会被记住，双击图标即可直接使用。</li>
+          <li class="desktop-only"><b>桌面版</b>：直接读写磁盘，选一次目录就记住绝对路径，没有授权步骤；启动即用，不需要重新允许。索引与缩略图存在程序目录的 <b>data\</b> 里，整个文件夹拷走即可换机器（照片在原位置，不受影响）。</li>
+          <li><b>数据存储</b>：缩略图和索引保存在本机，原图始终留在原目录，不会被移动或修改。</li>
           <li><b>RAW 支持</b>：默认关闭。RAW 文件（CR2/CR3/ARW/NEF/ORF/DNG 等）开启支持后，通过提取相机内嵌的 JPEG 预览图展示，不解码原始传感器数据。</li>
-          <li><b>迁移</b>：整个文件夹拷贝即可部署到其他电脑；但浏览器本地索引不随文件夹迁移，新机器上首次打开会重新扫描。</li>
+          <li><b>迁移</b>：整个文件夹拷贝即可部署到其他电脑；但索引不随文件夹迁移，新机器上首次打开会重新扫描。</li>
+          <li class="web-only"><b>补 GPS 联动</b>：地图页左下角的无位置信息按文件夹聚合，点击会调用同目录下的 <b>GPSStamp</b> 补齐坐标，需要先运行一次 <b>GPSStamp\注册联动.bat</b>（仅当前用户，可用「取消联动.bat」撤销），并在本页给对应图片库填一次「本机路径」——浏览器不提供目录的绝对路径，只能手填。</li>
+          <li class="desktop-only"><b>补 GPS 联动</b>：地图页左下角按文件夹聚合无位置信息的照片，点一下直接启动同目录下的 <b>GPSStamp</b>，并且只载入该文件夹里缺 GPS 的照片，填一次坐标即可，已有坐标的照片不会被覆盖。</li>
         </ul>
       </details>
     </div>
@@ -186,6 +202,7 @@
 
 <!-- Lightbox -->
 <div id="lightbox" class="lightbox hidden">
+  <button id="lb-map" class="lb-map hidden" type="button" title="在地图中定位这张照片">在地图中查看</button>
   <button class="lb-close" id="lb-close" title="关闭 (Esc)">×</button>
   <button class="lb-nav lb-prev" id="lb-prev" title="上一张 (←)">‹</button>
   <div class="lb-stage">
@@ -202,6 +219,7 @@
   <div class="confirm-box" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-msg">
     <h3 id="confirm-title">确认操作</h3>
     <p id="confirm-msg"></p>
+    <input id="confirm-input" class="confirm-input hidden" type="text" spellcheck="false" autocomplete="off">
     <div class="confirm-actions">
       <button id="confirm-cancel" class="btn btn-ghost" type="button">取消</button>
       <button id="confirm-ok" class="btn btn-danger" type="button">确定</button>
@@ -211,6 +229,12 @@
 
 <!-- 依赖与脚本（经典脚本，file:// 下可用） -->
 <script src="assets/vendor/exifr.full.js"></script>
+<!-- 文件访问适配层：定义了「选目录 / 枚举 / 读文件 / 问权限」的契约。
+     桌面壳里 preload 注入 window.__COVE_DESKTOP，desktop.js 先注册；
+     浏览器里 desktop.js 什么都不做，由 web.js（File System Access）接手。 -->
+<script src="js/platform/api.js"></script>
+<script src="js/platform/desktop.js"></script>
+<script src="js/platform/web.js"></script>
 <script src="js/store.js"></script>
 <script src="js/raw.js"></script>
 <script src="js/exif.js"></script>

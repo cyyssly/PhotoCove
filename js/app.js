@@ -13,9 +13,11 @@
     });
   }
 
-  /* ============ 兼容性检测 ============ */
+  /* ============ 兼容性检测 ============
+   * 交给适配层判断：浏览器要求有 showDirectoryPicker，桌面壳则不需要。
+   * 以前这里直接读 window.showDirectoryPicker，桌面化后会把正常环境误判成不支持。 */
   function checkCompat() {
-    if (!window.showDirectoryPicker || !window.indexedDB) {
+    if (!PLATFORM.isSupported || !window.indexedDB) {
       $('#compat-banner').classList.remove('hidden');
       return false;
     }
@@ -70,20 +72,33 @@
   };
   function setStatus(msg) { $('#scan-status').textContent = msg || ''; }
 
-  /* ============ 确认对话框 ============
-   * 用页面内对话框替代 window.confirm：样式跟随主题、内容可排版，
-   * 也不会在某些内嵌/应用模式（PWA）下被浏览器静默忽略。 */
-  function confirmDialog(opts = {}) {
-    const { title = '确认操作', message = '', okText = '确定', cancelText = '取消', danger = true } = opts;
+  /* ============ 页内对话框 ============
+   * 用页面内对话框替代 window.confirm / prompt：样式跟随主题、内容可排版，
+   * 也不会在某些内嵌/应用模式（PWA）下被浏览器静默忽略。
+   * input=true 时多出一个文本框，返回用户输入的字符串；取消返回 null。 */
+  function dialog(opts = {}) {
+    const {
+      title = '确认操作', message = '', okText = '确定', cancelText = '取消',
+      danger = true, input = false, value = '', placeholder = '',
+    } = opts;
     const overlay = $('#confirm-overlay');
     const ok = $('#confirm-ok');
     const cancel = $('#confirm-cancel');
+    const inputEl = $('#confirm-input');
 
     $('#confirm-title').textContent = title;
     $('#confirm-msg').textContent = message;
     ok.textContent = okText;
     cancel.textContent = cancelText;
     ok.className = 'btn' + (danger ? ' btn-danger' : '');
+    if (input) {
+      inputEl.classList.remove('hidden');
+      inputEl.value = value;
+      inputEl.placeholder = placeholder;
+    } else {
+      inputEl.classList.add('hidden');
+      inputEl.value = '';
+    }
     overlay.classList.remove('hidden');
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -98,23 +113,95 @@
         cancel.removeEventListener('click', onCancel);
         resolve(val);
       };
-      const onOk = () => done(true);
-      const onCancel = () => done(false);
-      const onBackdrop = (e) => { if (e.target === overlay) done(false); };
+      const accept = () => (input ? inputEl.value : true);
+      const onOk = () => done(accept());
+      const onCancel = () => done(input ? null : false);
+      const onBackdrop = (e) => { if (e.target === overlay) done(input ? null : false); };
       const onKey = (e) => {
         if (overlay.classList.contains('hidden')) return;
-        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(input ? null : false); }
         else if (e.key === 'Enter') {
           e.preventDefault(); e.stopPropagation();
-          done(document.activeElement === cancel ? false : true);
+          done(document.activeElement === cancel ? (input ? null : false) : accept());
         }
       };
       ok.addEventListener('click', onOk);
       cancel.addEventListener('click', onCancel);
       overlay.addEventListener('click', onBackdrop);
       document.addEventListener('keydown', onKey, true);
-      cancel.focus();
+      if (input) { inputEl.focus(); inputEl.select(); } else { cancel.focus(); }
     });
+  }
+
+  function confirmDialog(opts = {}) {
+    return dialog(opts).then(v => v === true);
+  }
+  function promptDialog(opts = {}) {
+    return dialog(Object.assign({}, opts, { input: true }));
+  }
+
+  /* ============ 本机路径 ============
+   * File System Access 只给目录名，拿不到绝对路径（浏览器刻意为之）。
+   * 与 GPSStamp 联动要真实路径，所以让用户补一次，记在 dirs 记录里。
+   * 目录记录里没有 path 时，第一次点文件夹会弹框询问，之后不再问。 */
+  function normDir(p) {
+    return String(p == null ? '' : p).trim()
+      .replace(/^["']+|["']+$/g, '')   // 粘贴时常常带引号
+      .replace(/[\\/]+$/, '');          // 去掉结尾斜杠
+  }
+  function isAbsWinPath(p) {
+    return /^[a-zA-Z]:\\/.test(p) || /^\\\\[^\\]/.test(p);   // C:\... 或 \\server\share
+  }
+  function joinPath(base, rel) {
+    const b = normDir(base);
+    const r = String(rel || '').replace(/^[\\/]+/, '').replace(/\//g, '\\');
+    return r ? b + '\\' + r : b;
+  }
+
+  /* 返回图片库的本机根路径；用户取消则返回 ''。 */
+  async function askDirPath(dir) {
+    for (;;) {
+      const v = await promptDialog({
+        title: '填写图片库的本机路径',
+        message: `「${dir.name}」在磁盘上的完整路径。\n浏览器出于隐私不提供绝对路径，所以这里需要手动填一次，之后会记住。`,
+        placeholder: '例如 F:\\01照片',
+        value: normDir(dir.path),
+        okText: '保存',
+        danger: false,
+      });
+      if (v === null) return '';
+      const p = normDir(v);
+      if (!p) { toast('路径不能为空'); continue; }
+      if (!isAbsWinPath(p)) { toast('请填 Windows 完整路径，例如 F:\\01照片'); continue; }
+      dir.path = p;
+      try { await DB.updateDir(dir); } catch (e) { toast('保存路径失败：' + (e && e.message || e)); return ''; }
+      return p;
+    }
+  }
+
+  /* 唤起本机 GPSStamp。
+   * 网页版靠 gpsstamp:// 协议（需先运行一次 GPSStamp\注册联动.bat）；
+   * 桌面壳由适配层直接启动进程，不再需要注册表和「是否打开」确认，
+   * 并且会带 --missing-only，只载入缺 GPS 的照片。 */
+  function launchGpsStamp(folder) {
+    let pr = null;
+    try {
+      pr = PLATFORM.launchGpsStamp(folder);
+    } catch (e) {
+      console.warn('[gpsstamp]', e);
+    }
+    if (pr && typeof pr.then === 'function') {
+      pr.then(r => {
+        if (r && r.ok === false) { toast('无法启动 GPSStamp：' + (r.error || '未知原因'), true); return; }
+        if (PLATFORM.isDesktop) toast('已打开 GPSStamp，只载入了该文件夹里没有 GPS 的照片');
+      }).catch(e => toast('无法启动 GPSStamp：' + (e && e.message || e), true));
+      return;
+    }
+    DB.getSetting('gpsstampTipShown', '').then(v => {
+      if (v) return;
+      DB.setSetting('gpsstampTipShown', '1').catch(() => {});
+      toast('已请求打开 GPSStamp。若没有反应，先运行一次 GPSStamp 目录下的「注册联动.bat」。');
+    }).catch(() => {});
   }
 
   /* ============ 目录授权 ============
@@ -136,7 +223,7 @@
     const next = new Map();
     for (const d of list) {
       let perm = 'denied';
-      try { perm = await SCAN.dirPermission(d.handle); } catch (e) { perm = 'denied'; }
+      try { perm = await SCAN.dirPermission(d); } catch (e) { perm = 'denied'; }
       next.set(d.id, perm === 'granted' ? 'granted' : perm);
     }
     permMap = next;
@@ -146,9 +233,11 @@
 
   /* 顶部横幅 + 设置页授权条 + 导航红点，三处同步 */
   function paintPermUI() {
+    const dt = PLATFORM.isDesktop;
     const pending = ungrantedDirs().length;
     const banner = $('#perm-banner');
-    if (banner) banner.classList.toggle('hidden', pending === 0);
+    // 桌面端不存在"授权"这回事，横幅（文案是「允许访问」）就不该出现
+    if (banner) banner.classList.toggle('hidden', dt || pending === 0);
 
     const text = $('#dir-perm-text');
     const btn = $('#grant-all');
@@ -157,20 +246,26 @@
         text.textContent = '还没有添加图片库目录';
         text.className = 'dir-perm-text';
       } else if (pending) {
-        text.innerHTML = `有 <b>${pending}</b> 个目录未授权，照片无法读取（浏览器<b>完全退出</b>后会收回权限，按 F5 刷新不影响）`;
+        text.innerHTML = dt
+          ? `有 <b>${pending}</b> 个目录当前读不到：盘没连接，或文件夹被改名/移动了`
+          : `有 <b>${pending}</b> 个目录未授权，照片无法读取（浏览器<b>完全退出</b>后会收回权限，按 F5 刷新不影响）`;
         text.className = 'dir-perm-text warn';
       } else {
-        text.innerHTML = `全部 ${_dirsCache.length} 个目录已授权，可以正常读取照片`;
+        text.innerHTML = dt
+          ? `${_dirsCache.length} 个目录可正常读取`
+          : `全部 ${_dirsCache.length} 个目录已授权，可以正常读取照片`;
         text.className = 'dir-perm-text ok';
       }
     }
-    if (btn) btn.classList.toggle('hidden', pending === 0);
+    if (btn) btn.classList.toggle('hidden', dt || pending === 0);
 
     // 设置页导航加未授权标记，避免用户在当前页面找不到入口
     const nav = document.querySelector('.nav-btn[data-view="settings"]');
     if (nav) {
       nav.classList.toggle('has-alert', pending > 0);
-      nav.title = pending > 0 ? `${pending} 个图片库目录需要授权` : '';
+      nav.title = pending > 0
+        ? (dt ? `${pending} 个目录读不到` : `${pending} 个图片库目录需要授权`)
+        : '';
     }
   }
 
@@ -179,22 +274,17 @@
     return refreshPermissions();
   }
 
-  /* 在用户手势内请求授权。必须第一句就调 requestPermission，
+  /* 在用户手势内请求授权。实现放在适配层：浏览器的 requestPermission 必须第一句就调，
    * 中间不能 await IndexedDB，否则浏览器会认为不是用户主动操作而直接拒绝。
    * 返回 { ok, broken }：broken 表示句柄本身已失效（改名/移动/清过站点数据），
-   * 这种情况下点多少次都不会弹询问框，只能移除后重新添加目录。 */
-  async function requestDirPermission(handle) {
-    if (!handle || typeof handle.requestPermission !== 'function') return { ok: false, broken: true };
-    try {
-      const p = await handle.requestPermission({ mode: 'read' });
-      return { ok: p === 'granted', broken: false };
-    } catch (e) {
-      return { ok: false, broken: true };
-    }
+   * 这种情况下点多少次都不会弹询问框，只能移除后重新添加目录。
+   * 桌面壳没有授权概念，适配层直接返回 { ok: true, broken: false }。 */
+  function requestDirPermission(dir) {
+    return PLATFORM.requestPermission(dir);
   }
 
   async function grantOne(dir) {
-    const r = await requestDirPermission(dir.handle);
+    const r = await requestDirPermission(dir);
     await refreshPermissions();
     await renderDirList();
     await renderStorageInfo().catch(() => {});
@@ -220,7 +310,7 @@
     try {
       // 浏览器会逐个弹询问框，必须按顺序来
       for (const d of pending) {
-        const r = await requestDirPermission(d.handle);
+        const r = await requestDirPermission(d);
         if (r.ok) okCount++;
         else if (r.broken) brokenCount++;
       }
@@ -253,20 +343,32 @@
     }
     dirs.forEach(d => {
       const granted = isGranted(d.id);
+      const dt = PLATFORM.isDesktop;      // 桌面端没有「授权」这回事，只是文件夹在不在
       const li = document.createElement('li');
       li.className = 'dir-row' + (granted ? '' : ' dir-row-warn');
 
       const main = document.createElement('div');
       main.className = 'dir-main';
+      const line = document.createElement('div');
+      line.className = 'dir-line';
       const name = document.createElement('span');
       name.className = 'dir-name';
       name.textContent = d.name;
       name.title = d.name;
       const badge = document.createElement('span');
       badge.className = 'dir-badge ' + (granted ? 'ok' : 'warn');
-      badge.textContent = granted ? '已授权' : '未授权';
-      main.appendChild(name);
-      main.appendChild(badge);
+      badge.textContent = granted ? (dt ? '可读取' : '已授权') : (dt ? '不可用' : '未授权');
+      line.appendChild(name);
+      line.appendChild(badge);
+      main.appendChild(line);
+
+      // 本机绝对路径：浏览器拿不到（要用户手填），桌面端选目录时就知道
+      const pathEl = document.createElement('span');
+      pathEl.className = 'dir-path' + (d.path ? '' : ' unset');
+      pathEl.textContent = d.path
+        || (dt ? '没有本机路径（此记录来自网页版，请移除后重新添加）' : '未填本机路径（地图页联动 GPSStamp 时需要）');
+      pathEl.title = d.path || '';
+      main.appendChild(pathEl);
 
       const actions = document.createElement('div');
       actions.className = 'dir-actions';
@@ -275,7 +377,20 @@
       stats.textContent = `${counts[d.id] || 0} 张`;
       actions.appendChild(stats);
 
-      if (!granted) {
+      if (!dt) {
+        const setPath = document.createElement('button');
+        setPath.className = 'btn btn-small btn-ghost';
+        setPath.textContent = d.path ? '改路径' : '设路径';
+        setPath.title = '填写该图片库在磁盘上的完整路径，供地图页唤起 GPSStamp 使用';
+        setPath.disabled = _scanning;
+        setPath.addEventListener('click', async () => {
+          const p = await askDirPath(d);
+          if (p) { await renderDirList(); toast('已记住路径：' + p); }
+        });
+        actions.appendChild(setPath);
+      }
+
+      if (!granted && !dt) {
         const grant = document.createElement('button');
         grant.className = 'btn btn-small dir-grant';
         grant.textContent = '授权';
@@ -288,7 +403,7 @@
       scan.className = 'btn btn-small dir-scan' + (granted ? '' : ' btn-ghost');
       scan.textContent = '扫描';
       scan.disabled = _scanning;
-      if (!granted) scan.title = '该目录尚未授权，点「授权」后才能读取照片';
+      if (!granted) scan.title = dt ? '该文件夹当前读不到：盘未连接、或被改名/移动了' : '该目录尚未授权，点「授权」后才能读取照片';
       scan.addEventListener('click', () => { runScan({ dirId: d.id }); });
 
       const del = document.createElement('button');
@@ -331,17 +446,23 @@
     if (raw && !raw.classList.contains('hidden')) raw.disabled = busy;
   }
 
+  /* 添加图片库：选目录这件事交给适配层。
+   * 浏览器弹 showDirectoryPicker 只给句柄；桌面壳弹系统对话框，顺便就能拿到绝对路径。 */
   async function addDirectory() {
     try {
-      const handle = await window.showDirectoryPicker({ mode: 'read' });
+      const picked = await PLATFORM.pickDirectory();
+      if (!picked) return;                      // 用户取消
       const existing = await DB.listDirs();
-      const dup = existing.find(d => d.handle.name === handle.name && d.handle.kind === 'directory');
-      if (dup) { toast(`目录「${handle.name}」已在列表中`); return; }
-      const newId = await DB.addDir({ name: handle.name, handle, addedAt: Date.now() });
+      if (existing.some(d => PLATFORM.isSameDir(d, picked))) {
+        toast(`目录「${picked.name}」已在列表中`);
+        return;
+      }
+      const rec = Object.assign(PLATFORM.newDirRecord(picked), { addedAt: Date.now() });
+      const newId = await DB.addDir(rec);
       // 刚添加的目录自带读权限，先刷新授权表，否则会误显示「未授权」
       await refreshPermissions();
       await renderDirList();
-      toast(`已添加「${handle.name}」，开始扫描…`);
+      toast(`已添加「${picked.name}」，开始扫描…`);
       runScan({ dirId: newId });
     } catch (e) {
       if (e && e.name !== 'AbortError') console.warn(e);
@@ -363,7 +484,7 @@
   }
 
   async function runScan(opts = {}) {
-    if (window.showDirectoryPicker === undefined) return;
+    if (!PLATFORM.isSupported) return;
     const dirs = await DB.listDirs();
     if (!dirs.length) { setStatus(''); return; }
     const targets = opts.dirId != null ? dirs.filter(d => d.id === opts.dirId) : dirs;
@@ -373,10 +494,18 @@
     await refreshPermissions(dirs);
     const blocked = targets.filter(t => !isGranted(t.id));
     if (blocked.length) {
-      setStatus('等待授权');
       const names = blocked.map(d => `「${d.name}」`).join('');
-      toast(`${names}未授权，扫描读不到文件。已切到设置页，点「授权全部目录」即可`, true);
       const nav = document.querySelector('.nav-btn[data-view="settings"]');
+      if (PLATFORM.isDesktop) {
+        // 桌面端没有可"授权"的入口：读不到就是盘没插、或被改名/移动
+        setStatus('目录不可用');
+        toast(`${names}当前读不到：盘未连接，或文件夹被改名/移动了。可到设置页「移除」后重新添加`, true);
+        if (nav && !nav.classList.contains('active')) nav.click();
+        await renderDirList();
+        return;
+      }
+      setStatus('等待授权');
+      toast(`${names}未授权，扫描读不到文件。已切到设置页，点「授权全部目录」即可`, true);
       if (nav && !nav.classList.contains('active')) nav.click();
       await renderDirList();          // 让每个未授权目录行立刻出现「授权」按钮
       const bar = $('#dir-perm-bar');
@@ -475,12 +604,16 @@
       const lines = [
         `照片记录 <b>${fmt(st.total)}</b> · 缩略图缓存 <b>${fmt(st.assets)}</b>`,
         `待生成 ${fmt(st.pending)} · 失败 ${fmt(st.error)} · 不可用 ${fmt(st.unavailable)}`,
-        `目录授权 ${granted}/${dirs.length}`,
+        PLATFORM.isDesktop
+          ? `目录可读取 ${granted}/${dirs.length}`
+          : `目录授权 ${granted}/${dirs.length}`,
       ];
 
       const se = await DB.storageEstimate();
       if (se) lines.push(`当前占用 <b>${fmtBytes(se.usage)}</b>`);
-      if (_persisted === true) {
+      if (PLATFORM.isDesktop) {
+        lines.push('数据位置 <b>程序目录的 data\\</b> <span class="diag-dim">随文件夹一起搬走</span>');
+      } else if (_persisted === true) {
         lines.push('存储保护 <b>已开启</b> <span class="diag-dim">浏览器不会自动清理本站缓存</span>');
       } else if (_persisted === false) {
         lines.push('存储保护 <b>未开启</b> <span class="diag-dim">磁盘紧张时可能被清理</span>');
@@ -600,14 +733,10 @@
     // 申请持久化存储：否则浏览器在磁盘紧张时可能直接回收我们的缩略图库，
     // 表现就是"某天打开突然全空白"。是否批准由浏览器决定（装成应用/加书签后更容易批）。
     // 结果记到 _persisted，供「存储状态」显示，让用户知道缓存受不受保护。
+    // 桌面壳里数据在程序自己的目录里，不存在被浏览器回收的问题，适配层会直接返回 true。
     (async () => {
       try {
-        if (!navigator.storage) { _persisted = false; return; }
-        if (navigator.storage.persisted) _persisted = !!(await navigator.storage.persisted());
-        if (!_persisted && navigator.storage.persist) {
-          await navigator.storage.persist();
-          if (navigator.storage.persisted) _persisted = !!(await navigator.storage.persisted());
-        }
+        _persisted = await PLATFORM.ensurePersistentStorage();
       } catch (e) {
         _persisted = false;
       } finally {
@@ -629,6 +758,12 @@
     bindSettings();
     renderStorageInfo().catch(() => {});
   }
+
+  /* 供地图页等其他模块复用：路径补全、唤起 GPSStamp、提示条 */
+  window.APP = {
+    toast, dialog, confirmDialog, promptDialog,
+    askDirPath, launchGpsStamp, normDir, isAbsWinPath, joinPath,
+  };
 
   document.addEventListener('DOMContentLoaded', boot);
 })();

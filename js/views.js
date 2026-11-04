@@ -16,6 +16,13 @@ const VIEWS = (() => {
   const $ = s => document.querySelector(s);
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
+  /* 是否带合法经纬度：与地图视图的判定保持一致，供「在地图中查看」等入口复用 */
+  function hasGps(p) {
+    const g = p && p.gps;
+    return !!(g && isFinite(g.lat) && isFinite(g.lng) &&
+      g.lat >= -90 && g.lat <= 90 && g.lng >= -180 && g.lng <= 180);
+  }
+
   /* ---------- 数据入口 ---------- */
   async function reload() {
     // 扫描中的增量刷新要保住用户当前浏览进度，否则每次刷新都被打回顶部
@@ -76,6 +83,9 @@ const VIEWS = (() => {
     $('#filter-bar').classList.toggle('hidden', state.view === 'settings');
     ['portfolio', 'timeline', 'albums', 'map', 'settings'].forEach(v =>
       $('#view-' + v).classList.toggle('hidden', v !== state.view));
+    // 相册详情才显示顶栏的返回按钮；切到其他视图立即收起
+    const backBtn = $('#album-back');
+    if (backBtn) backBtn.classList.toggle('hidden', !(state.view === 'albums' && state.album));
     revokeUrls();
     if (state.view === 'portfolio') renderPortfolio();
     else if (state.view === 'timeline') renderTimeline();
@@ -85,6 +95,19 @@ const VIEWS = (() => {
     } else if (typeof MAPVIEW !== 'undefined') {
       MAPVIEW.hide();
     }
+    updateBackTop();
+  }
+
+  /* 返回顶端：只在作品集 / 时间轴 / 相册列表、且滚动超过 3 屏时出现。
+   * 相册详情已有「返回相册列表」，两者互斥，不在同一页重复出现。
+   * 顶栏是 sticky 的，按钮放这里滚动中也始终可点。 */
+  function updateBackTop() {
+    const btn = $('#back-to-top');
+    if (!btn) return;
+    const scrollableView = state.view === 'portfolio' || state.view === 'timeline' ||
+      (state.view === 'albums' && !state.album);
+    const deep = (window.scrollY || document.documentElement.scrollTop || 0) > window.innerHeight * 3;
+    btn.classList.toggle('hidden', !(scrollableView && deep));
   }
 
   /* 图片/占位：有缩略图立即显示，没有则占位并在进入视口时按需生成
@@ -416,6 +439,7 @@ const VIEWS = (() => {
     grid.innerHTML = '';
     $('#album-detail').classList.add('hidden');
     $('#albums-grid').classList.remove('hidden');
+    $('#album-back').classList.add('hidden');
     const map = new Map();
     for (const p of state.filtered) {
       const k = albumKeyOf(p);
@@ -444,6 +468,7 @@ const VIEWS = (() => {
   function renderAlbumDetail() {
     clearPagers();
     $('#albums-grid').classList.add('hidden');
+    $('#album-back').classList.remove('hidden');
     const detail = $('#album-detail');
     detail.classList.remove('hidden');
     const list = sortedByDate(state.filtered.filter(p => albumKeyOf(p) === state.album));
@@ -506,6 +531,21 @@ const VIEWS = (() => {
     state.lbList = list;
     state.lbIndex = Math.max(0, Math.min(index || 0, list.length - 1));
     showLb();
+  }
+
+  /* 从大图跳到地图：先关大图，再切到地图视图并聚焦该点位。
+   * 来自作品集/时间轴/相册的照片也走这里，所以「照片 → 地图」的入口只需一个。 */
+  function locateOnMap(p) {
+    if (!p || !hasGps(p)) return;
+    closeLb();
+    if (state.view !== 'map') {
+      const nav = document.querySelector('.nav-btn[data-view="map"]');
+      if (!nav) return;
+      nav.click();   // 触发 render → MAPVIEW.show()，点位已就绪
+    }
+    if (typeof MAPVIEW !== 'undefined' && typeof MAPVIEW.focus === 'function') {
+      MAPVIEW.focus(p);
+    }
   }
 
   function showLb() {
@@ -582,6 +622,10 @@ const VIEWS = (() => {
     else if (assets && assets.error && assets.error !== 'raw-off') parts.push('<span class="exif-dim">预览生成失败</span>');
     if (p.isRaw) parts.push(`<span class="exif-dim">RAW·机内预览</span>`);
     $('#lb-info').innerHTML = parts.filter(Boolean).join('<span class="exif-dim"> ｜ </span>');
+
+    // 只有带 GPS 的照片才提供「在地图中查看」，避免点了没反应
+    const mapBtn = $('#lb-map');
+    if (mapBtn) mapBtn.classList.toggle('hidden', !hasGps(p));
 
     renderStrip();
 
@@ -687,6 +731,24 @@ const VIEWS = (() => {
     $('#lb-close').addEventListener('click', closeLb);
     $('#lb-prev').addEventListener('click', () => lbStep(-1));
     $('#lb-next').addEventListener('click', () => lbStep(1));
+    $('#lb-map').addEventListener('click', () => {
+      const p = state.lbList[state.lbIndex];
+      if (p) locateOnMap(p);
+    });
+
+    // 返回顶端：滚动事件用 rAF 合帧，避免长列表里频繁读布局
+    const topBtn = $('#back-to-top');
+    if (topBtn) {
+      topBtn.addEventListener('click', () => {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    }
+    let topRaf = 0;
+    window.addEventListener('scroll', () => {
+      if (topRaf) return;
+      topRaf = requestAnimationFrame(() => { topRaf = 0; updateBackTop(); });
+    }, { passive: true });
+    window.addEventListener('resize', updateBackTop);
     document.addEventListener('keydown', e => {
       if ($('#lightbox').classList.contains('hidden')) return;
       if (e.key === 'Escape') closeLb();
@@ -726,5 +788,10 @@ const VIEWS = (() => {
     });
   }
 
-  return { init, reload, render, state, openLightbox };
+  /* 供地图视图复用缩略图懒加载（无 GPS 照片面板） */
+  function thumbInto(el, p) {
+    fillMedia(el, p, true);
+  }
+
+  return { init, reload, render, state, openLightbox, thumbInto };
 })();

@@ -1,0 +1,15 @@
+# 依赖与构建产物（不要提交，GitHub Pages 也不需要）
+node_modules/
+dist/
+data/
+
+# 桌面壳的临时文件
+*.log
+
+# GPSStamp 是小工具本体，随仓库保留；但它的本机设置（路径、坐标）不该公开
+GPSStamp/settings.ini
+GPSStamp/data/
+
+# 截图与临时产物
+.screenshots/
+.trae-html-share-packages/

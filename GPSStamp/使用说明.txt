@@ -1,0 +1,93 @@
+GPSStamp — 给照片批量补 GPS 坐标
+==================================
+
+【怎么用】
+1. 双击 GPSStamp.bat
+2. 右上角下拉框切换 中文 / English，选择会记住
+3. 顶部填坐标，格式：纬度,经度（例如 39.9087,116.3975）
+   坐标可从 openstreetmap.org 复制；也可先复制到剪贴板再点「粘贴」
+4. 点「添加文件」（可多选）或「添加文件夹」（含子目录），
+   也可以直接把文件、文件夹拖进窗口
+   二者都会自动定位到上次用过的目录
+5. 「保留 _original 备份」默认勾选，会保留原文件副本
+   取消后会被记住，下次打开沿用上次的选择
+6. 点「写入 GPS」，日志区显示结果
+
+【它做了什么】
+写入的是 Composite:GPSPosition，一次写全四个标签：
+  GPSLatitude + GPSLatitudeRef + GPSLongitude + GPSLongitudeRef
+所以不会出现「纬度改了、方向没改」导致的坐标漂移。
+
+格式覆盖交给 exiftool：JPEG、HEIC/HEIF、TIFF、PNG、
+DNG/CR2/CR3/NEF/ARW/RAF/ORF/RW2 等 RAW，以及 MP4/MOV。
+只改元数据段，不重新压缩图像，画质无损。
+
+【坐标必须是 WGS-84】
+OpenStreetMap、Google 地图给的是 WGS-84，可直接用。
+高德是 GCJ-02、百度是 BD-09，直接粘贴会偏几百米，需先转换。
+
+【文件说明】
+GPSStamp.bat   启动器，双击这个
+GPSStamp.ps1   主程序，PowerShell + WinForms，无需安装、不写注册表
+settings.ini   设置文件，和程序放在一起（绿色、可随身带走）
+               首次运行自动生成；坐标、目录、备份、语言、exiftool 位置都在里面
+注册联动.bat   一次性把 gpsstamp:// 协议指到本目录（当前用户，无需管理员）
+取消联动.bat   撤销上面那项注册（只删 HKCU\Software\Classes\gpsstamp）
+register.ps1 / unregister.ps1   上面两个 bat 实际调用的脚本
+
+依赖 exiftool：第一次找到后会记进 settings.ini 的 exiftool=，
+以后程序被移动位置也能用；找不到时按顺序查找
+  settings.ini 里记录的位置
+  .\exiftool.exe
+  .\ExifToolGUI\exiftool.exe
+  ..\exiftool.exe、..\ExifToolGUI\exiftool.exe
+  PATH 中的 exiftool.exe
+本机当前用的是：E:\工具\图像&视频\ExifToolGUI\exiftool.exe
+
+【被 PhotoCove 唤起（联动）】
+
+两种方式，取决于你用的是网页版还是桌面版。两者都会只载入缺 GPS 的照片。
+
+A. PhotoCove 桌面版（Electron）—— 推荐，最省事
+1. 在 PhotoCove 地图页点左下角「N 张照片无位置信息」
+2. 面板按文件夹列出，点一个文件夹，GPSStamp 直接启动
+   不需要注册协议，也不会弹「是否打开」的确认
+3. 程序内部用的是 --missing-only 参数，见下方说明
+
+B. PhotoCove 网页版（浏览器）
+1. 先运行一次「注册联动.bat」，只需一次，之后不用管
+2. 在 PhotoCove 地图页点左下角「N 张照片无位置信息」
+3. 面板按文件夹列出，点一个文件夹 → 浏览器问是否打开 GPSStamp
+   勾「始终允许」后，以后点击直接打开
+4. 若点击没反应：多半是协议没注册，重新运行「注册联动.bat」；
+   或在设置页确认该图片库填过「本机路径」
+
+【命令行参数】
+  --missing-only <文件夹>   只把该文件夹里没有 GPS 的照片载入列表
+                            别的程序要"帮你补坐标"时必须用这个：
+                            直接传文件夹会全量载入，一按写入就把
+                            原本已有坐标的照片全部覆盖成同一个点
+
+【设置文件】
+位置：程序目录下的 settings.ini（与 GPSStamp.bat 同级）
+内容：coord=坐标 / dir=上次目录 / backup=1 或 0 / lang=zh 或 en
+      exiftool=exiftool.exe 的完整路径
+- 绿色做法：不写注册表、不写 APPDATA，整个文件夹拷走即可带走全部设置
+  （唯一的例外是联动协议，它必须写在注册表里，用「取消联动.bat」撤掉）
+- 想恢复默认：删掉 settings.ini，下次启动按系统语言重新生成
+- 例外：若程序放在只读位置（如 Program Files），无法写入，
+  会自动回退到 %APPDATA%\GPSStamp\settings.ini
+- 老版本的 last.txt / lastdir.txt / backup.txt / lang.txt 会自动并入，无需处理
+
+【注意】
+- 取消勾选备份会直接覆盖原文件，写错无法撤回
+- 坐标必须是「纬度,经度」十进制度，中间空格可有可无，程序会先校验再写入
+- 已启用 -m：老照片 MakerNotes 损坏时只报 Warning，仍会写入 GPS
+- 文件名通过 UTF-8 参数文件传给 exiftool，中文、空格路径均正常
+- 处理时按 40 个文件一批调用，避免命令行过长
+
+【命令行等价写法】
+"E:\工具\图像&视频\ExifToolGUI\exiftool.exe" -GPSPosition=39.9087,116.3975 "照片目录"
+加 -r 递归子目录；加 -overwrite_original 不保留 _original 备份。
+
+版本：2026-11-04

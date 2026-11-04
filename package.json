@@ -1,0 +1,14 @@
+{
+  "name": "photocove",
+  "version": "17.0.0",
+  "private": true,
+  "description": "PhotoCove — 本地摄影作品展示站（浏览器版 + Electron 桌面版）",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "selftest": "electron . --selftest --dir ."
+  },
+  "devDependencies": {
+    "electron": "^45.2.2"
+  }
+}

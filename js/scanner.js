@@ -19,10 +19,13 @@ const SCAN = (() => {
   const MEM_MAX = 400;            // 内存里最多留多少张的 Blob
 
   let _rawEnabled = false;
-  let _handleCache = null;
 
   function setRawEnabled(v) { _rawEnabled = !!v; }
-  function resetDirCache() { _handleCache = null; }
+
+  /* dirId -> 目录记录。扫描开始、目录增删、授权变化时失效。
+   * 以前只缓存句柄，现在缓存整条记录：桌面端的记录里没有句柄，只有本机路径。 */
+  let _dirCache = null;
+  function resetDirCache() { _dirCache = null; }
 
   /* ---- 内存 LRU：最近用过的缩略图/大图，避免重绘时反复读库 ---- */
   const _mem = new Map();   // id -> { thumb, preview }
@@ -79,59 +82,25 @@ const SCAN = (() => {
     return _previewLong;
   }
 
-  /* ---- 权限 ---- */
-  async function dirPermission(handle) {
-    if (!handle || typeof handle.queryPermission !== 'function') return 'denied';
-    try { return (await handle.queryPermission({ mode: 'read' })) || 'denied'; }
-    catch (e) { return 'denied'; }   // 句柄失效（换浏览器版本/清理过站点数据）时不能抛出去
+  /* ---- 目录访问一律走适配层（js/platform/*）----
+   * 本文件不再直接调用 File System Access API，也不再持有目录句柄：
+   * 浏览器给的是句柄，桌面壳给的是绝对路径，差异全部由适配层吸收。
+   * 换壳时这里一行都不用改。 */
+  async function dirPermission(dir) {
+    try { return await PLATFORM.queryPermission(dir); }
+    catch (e) { return 'denied'; }
   }
 
-  /* 按相对路径取文件句柄。
-   * relPath 形如 "2024/春季/DSC_0001.jpg"，而 FileSystemDirectoryHandle.getFileHandle()
-   * 只接受**单段名字**，把整串路径塞进去必抛 NotFoundError。
-   * 早期版本就是这么写的，结果所有子文件夹里的照片都读不出来（只有根目录下的几张正常），
-   * 表现为「照片大量空白」，诊断里则显示「打开文件：文件路径不存在」。
-   * 正确做法是逐级 getDirectoryHandle 下钻，最后再取文件。 */
-  async function resolveFile(rootHandle, relPath) {
-    const parts = String(relPath || '').split(/[\\/]+/).filter(Boolean);
-    const fileName = parts.pop();
-    if (!fileName) throw new Error('路径为空');
-    let dir = rootHandle;
-    for (const seg of parts) {
-      try {
-        dir = await dir.getDirectoryHandle(seg);
-      } catch (e) {
-        const err = new Error(`子目录「${seg}」不存在（可能已改名或移动，重新扫描该目录即可修正）`);
-        err.stage = 'dir';
-        throw err;
-      }
-    }
-    try {
-      return await dir.getFileHandle(fileName);
-    } catch (e) {
-      const err = new Error(`文件「${fileName}」不存在（可能已被删除或移动）`);
-      err.stage = 'file';
-      throw err;
-    }
+  function resolveFile(dir, relPath) {
+    return PLATFORM.resolveFile(dir, relPath);
   }
 
-  async function dirHandles() {
-    if (!_handleCache) {
+  async function dirRecord(id) {
+    if (!_dirCache) {
       const ds = await DB.listDirs();
-      _handleCache = new Map(ds.map(d => [d.id, d.handle]));
+      _dirCache = new Map(ds.map(d => [d.id, d]));
     }
-    return _handleCache;
-  }
-
-  /* ---- 递归枚举 ---- */
-  async function walk(dirHandle, prefix, out) {
-    for await (const entry of dirHandle.values()) {
-      if (entry.kind === 'file') {
-        out.push({ relPath: prefix + entry.name, name: entry.name, fileHandle: entry });
-      } else if (entry.kind === 'directory') {
-        await walk(entry, prefix + entry.name + '/', out);
-      }
-    }
+    return _dirCache.get(id) || null;
   }
 
   /* ============ 轻量尺寸解析（读文件头，不解码） ============ */
@@ -194,18 +163,24 @@ const SCAN = (() => {
     return Number.isFinite(ts) && ts > Date.UTC(1990, 0, 1) && ts < Date.now() + 86400000;
   }
 
-  /* ============ 扫描阶段：只读元数据 ============ */
-  async function processFile(dirId, relPath, file, old) {
-    const ext = RAW.extOf(file.name);
+  /* ============ 扫描阶段：只读元数据 ============
+   * blob 可能只是文件开头一小段（桌面端为了不整盘读，只取前 512KB），
+   * 所以名字/大小/修改时间一律以 meta 为准，不能从 blob 上取。 */
+  async function processFile(dirId, relPath, blob, old, meta) {
+    const name = (meta && meta.name) || blob.name;
+    const size = (meta && meta.size != null) ? meta.size : blob.size;
+    const mtime = (meta && meta.mtime != null) ? meta.mtime : blob.lastModified;
+
+    const ext = RAW.extOf(name);
     const isImage = IMG_EXTS.has(ext);
-    const isRaw = RAW.isRawName(file.name);
+    const isRaw = RAW.isRawName(name);
     if (!isImage && !isRaw) return null;
 
     const rec = {
       id: dirId + ':' + relPath,
-      dirId, relPath, name: file.name, ext, isRaw,
-      size: file.size,
-      mtime: file.lastModified,
+      dirId, relPath, name, ext, isRaw,
+      size,
+      mtime,
       addedAt: old ? old.addedAt : Date.now(),
       width: null, height: null,
       make: '', model: '', lens: '', focal: null, fnum: null, exposure: null, iso: null,
@@ -218,7 +193,7 @@ const SCAN = (() => {
     // 1) 尺寸：读文件头解析，不解码像素（RAW 跳过，留给按需解码）
     if (!isRaw) {
       try {
-        const head = await file.slice(0, HEAD_BYTES).arrayBuffer();
+        const head = await blob.slice(0, HEAD_BYTES).arrayBuffer();
         const dims = dimsFromHead(new Uint8Array(head), ext);
         if (dims && dims.w > 0 && dims.h > 0) { rec.width = dims.w; rec.height = dims.h; }
       } catch (e) { /* ignore */ }
@@ -226,21 +201,21 @@ const SCAN = (() => {
 
     // 2) EXIF（exifr 只读元数据段，速度很快；RAW 跳过以避免整块扫描）
     if (!isRaw) {
-      const meta = await EXIF.parse(file);
+      const ex = await EXIF.parse(blob);
       Object.assign(rec, {
-        make: meta.make, model: meta.model, lens: meta.lens,
-        focal: meta.focal, fnum: meta.fnum, exposure: meta.exposure, iso: meta.iso,
-        gps: meta.gps || null,   // 经纬度，供地图视图点亮使用
+        make: ex.make, model: ex.model, lens: ex.lens,
+        focal: ex.focal, fnum: ex.fnum, exposure: ex.exposure, iso: ex.iso,
+        gps: ex.gps || null,   // 经纬度，供地图视图点亮使用
       });
-      if (!rec.width && meta.width) { rec.width = meta.width; rec.height = meta.height; }
-      if (meta.date) {
-        const t = +new Date(meta.date);
+      if (!rec.width && ex.width) { rec.width = ex.width; rec.height = ex.height; }
+      if (ex.date) {
+        const t = +new Date(ex.date);
         if (plausibleDate(t)) rec.date = t;
       }
     }
 
     // 3) 拍摄时间兜底：EXIF 合理时间 → 合理 mtime → null
-    if (!plausibleDate(rec.date) && plausibleDate(file.lastModified)) rec.date = file.lastModified;
+    if (!plausibleDate(rec.date) && plausibleDate(mtime)) rec.date = mtime;
     if (!plausibleDate(rec.date)) rec.date = null;
 
     if (isRaw && !_rawEnabled) rec.thumbState = 'unavailable';
@@ -272,11 +247,11 @@ const SCAN = (() => {
 
       for (const dir of dirs) {
         if (opts.shouldAbort && opts.shouldAbort()) { report.aborted = true; break; }
-        const perm = await dirPermission(dir.handle);
+        const perm = await dirPermission(dir);
         if (perm !== 'granted') { report.skippedDirs.push(dir.name); continue; }
 
         const files = [];
-        await walk(dir.handle, '', files);
+        await PLATFORM.walk(dir, e => { files.push(e); });
         const imgFiles = files.filter(f => IMG_EXTS.has(RAW.extOf(f.name)) || RAW.isRawName(f.name));
 
         let done = 0;
@@ -284,10 +259,16 @@ const SCAN = (() => {
           if (opts.shouldAbort && opts.shouldAbort()) { report.aborted = true; break; }
           const id = dir.id + ':' + f.relPath;
           const old = byId.get(id);
-          let file;
-          try { file = await f.fileHandle.getFile(); } catch (e) { done++; continue; }
-          const changed = !old || old.mtime !== file.lastModified || old.size !== file.size;
+          // 大小与 mtime 由枚举阶段直接给出（浏览器是 File 的元数据，桌面端是 fs.stat），
+          // 因此「没变」的文件无需打开，桌面端也就不会把整盘照片读一遍。
+          const size = (f.size != null) ? f.size : null;
+          const mtime = (f.lastModified != null) ? f.lastModified : null;
+          const changed = !old || size == null || mtime == null
+            || old.mtime !== mtime || old.size !== size;
           if (!changed) { done++; continue; }
+
+          let blob;
+          try { blob = await f.getFile(); } catch (e) { done++; continue; }
 
           // 文件变了 → 旧缩略图/大图已过期，删掉
           if (old) {
@@ -295,7 +276,8 @@ const SCAN = (() => {
             try { await DB.deleteAssets(id); } catch (e) { /* ignore */ }
           }
 
-          const rec = await processFile(dir.id, f.relPath, file, old);
+          const rec = await processFile(dir.id, f.relPath, blob, old,
+            { name: f.name, size, mtime });
           done++;
           if (!rec) { if (old) { await DB.deletePhoto(id); report.removed++; } continue; }
           report[old ? 'updated' : 'added']++;
@@ -390,17 +372,12 @@ const SCAN = (() => {
    * 失败：{ ok:false, error:'permission'|'raw-off'|'missing-file'|'no-handle'|'decode'|'timeout' }
    *   其中只有 'raw-off' 是永久性的；permission/decode/timeout 都应允许重试。 */
   async function loadSource(p) {
-    const map = await dirHandles();
-    const dh = map.get(p.dirId);
-    if (!dh) return { error: 'no-handle' };
-    let perm = 'denied';
-    try { perm = await dirPermission(dh); } catch (e) { return { error: 'permission' }; }
-    if (perm !== 'granted') return { error: 'permission' };
+    const dir = await dirRecord(p.dirId);
+    if (!dir) return { error: 'no-handle' };
+    if ((await dirPermission(dir)) !== 'granted') return { error: 'permission' };
 
-    let fh;
-    try { fh = await resolveFile(dh, p.relPath); } catch (e) { return { error: 'missing-file' }; }
     let file;
-    try { file = await fh.getFile(); } catch (e) { return { error: 'missing-file' }; }
+    try { file = await PLATFORM.openFile(dir, p.relPath); } catch (e) { return { error: 'missing-file' }; }
 
     if (!p.isRaw) return { file };
     try {
@@ -455,16 +432,19 @@ const SCAN = (() => {
     }
   }
 
-  /* 取原图（RAW 取其内嵌 JPEG 预览）的 Blob URL，由调用方负责 revoke */
+  /* 取原图（RAW 取其内嵌 JPEG 预览）的 URL，由调用方负责 revoke。
+   * 桌面壳能直接给出 covefile:// 地址，那就交给 Chromium 自己流式加载，
+   * 不必把几十 MB 的原图先读进 JS 堆再转 Blob URL。 */
   async function originalUrl(p) {
-    const map = await dirHandles();
-    const dh = map.get(p.dirId);
-    if (!dh) return null;
-    if ((await dirPermission(dh)) !== 'granted') return null;
-    let fh;
-    try { fh = await resolveFile(dh, p.relPath); } catch (e) { return null; }
+    const dir = await dirRecord(p.dirId);
+    if (!dir) return null;
+    if ((await dirPermission(dir)) !== 'granted') return null;
+    if (!p.isRaw) {
+      const direct = PLATFORM.imageUrl(dir, p.relPath);
+      if (direct) return direct;
+    }
     let file;
-    try { file = await fh.getFile(); } catch (e) { return null; }
+    try { file = await PLATFORM.openFile(dir, p.relPath); } catch (e) { return null; }
     if (!p.isRaw) return URL.createObjectURL(file);
     if (!_rawEnabled) return null;
     try {

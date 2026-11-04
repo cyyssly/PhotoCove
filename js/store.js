@@ -115,6 +115,8 @@ const DB = (() => {
     });
   }
   function addDir(record) { return tx('dirs', 'readwrite', s => s.add(record)); }
+  /* 更新目录记录（如补记本机绝对路径）。整条 put 回去，句柄随记录一起保留。 */
+  function updateDir(record) { return tx('dirs', 'readwrite', s => s.put(record)); }
 
   function removeDir(id) {
     return open().then(db => new Promise((resolve, reject) => {
@@ -267,7 +269,7 @@ const DB = (() => {
   }
 
   return {
-    open, getSetting, setSetting, listDirs, addDir, removeDir,
+    open, getSetting, setSetting, listDirs, addDir, updateDir, removeDir,
     putPhoto, putPhotos, allPhotos, deletePhoto, clearPhotos, countPhotosByDir,
     getAssets, putAssets, deleteAssets,
     stats, storageEstimate,
