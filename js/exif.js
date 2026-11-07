@@ -1,4 +1,8 @@
-/* exif.js — EXIF 解析封装（基于 exifr UMD 全量包，全局变量 exifr） */
+/* exif.js — EXIF 字段格式化 + 页面侧解析（备用）
+ *
+ * 扫描已经改由主进程完成（electron/scan-meta.js）：那边读文件头就地解析，
+ * 只把尺寸/EXIF 回传，页面不再经手照片字节。这里的 parse() / thumbnail()
+ * 保留作为备用路径（例如将来要把解析搬回页面），当前扫描不调用。 */
 'use strict';
 
 const EXIF = (() => {

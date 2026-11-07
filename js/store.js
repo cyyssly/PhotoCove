@@ -3,13 +3,14 @@
  * v4 起把「元数据」和「图片二进制」拆成两个 store：
  *   photos  : 纯元数据（路径/时间/EXIF/尺寸/状态），几万条也只有几 MB
  *   assets  : 缩略图与大图 Blob，只在真正显示时才按 id 读取
+ *   gpsOverrides : 应用内手动补写的坐标（v6），独立于 photos，清空索引也不删
  * 这样 allPhotos() 不会再把整个图库的二进制搬进内存（旧实现在几万张时会卡死）。
  */
 'use strict';
 
 const DB = (() => {
   const DB_NAME = 'photo-gallery';
-  const DB_VER = 5; // v5：修复被误标为「不可用」的缩略图状态
+  const DB_VER = 6; // v6：新增 gpsOverrides（手动补写的坐标，独立于 photos）
   let _db = null;
 
   /* v5：把「临时失败被写成永久不可用」的记录复位，让它们重新尝试生成。
@@ -50,6 +51,10 @@ const DB = (() => {
           s.createIndex('dirId', 'dirId');
         }
         if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets', { keyPath: 'id' });
+        // v6：应用内补写的 GPS 坐标。故意不放进 photos —— 清空索引、RAW 记录重建
+        // 都会把 photos 里的记录删掉/覆盖，而 exiftool 给 RAW 写的 GPS 又在文件尾部，
+        // 96KB 读头读不回来。单独存一份，扫描时按 id 回填。
+        if (!db.objectStoreNames.contains('gpsOverrides')) db.createObjectStore('gpsOverrides', { keyPath: 'id' });
 
         // v4 迁移：把旧记录里的 thumb/preview 搬到 assets，并从元数据里删掉
         if (from && from < 4) {
@@ -118,16 +123,18 @@ const DB = (() => {
 
   function removeDir(id) {
     return open().then(db => new Promise((resolve, reject) => {
-      // 删目录记录 + 该目录下的照片 + 对应的图片资源
-      const t = db.transaction(['dirs', 'photos', 'assets'], 'readwrite');
+      // 删目录记录 + 该目录下的照片 + 对应的图片资源 + 手动补写的坐标
+      const t = db.transaction(['dirs', 'photos', 'assets', 'gpsOverrides'], 'readwrite');
       t.objectStore('dirs').delete(id);
       const ps = t.objectStore('photos');
       const as = t.objectStore('assets');
+      const gs = t.objectStore('gpsOverrides');
       const req = ps.index('dirId').openCursor(IDBKeyRange.only(id));
       req.onsuccess = (e) => {
         const c = e.target.result;
         if (!c) return;
         as.delete(c.value.id);
+        gs.delete(c.value.id);
         c.delete();
         c.continue();
       };
@@ -171,11 +178,34 @@ const DB = (() => {
       t.onerror = () => reject(t.error);
     }));
   }
+  /* 清空索引只清照片记录与图片缓存；gpsOverrides 故意不动，
+   * 重建索引时扫描器会把手动补过的坐标原样还回去。 */
   function clearPhotos() {
     return open().then(db => new Promise((resolve, reject) => {
       const t = db.transaction(['photos', 'assets'], 'readwrite');
       t.objectStore('photos').clear();
       t.objectStore('assets').clear();
+      t.oncomplete = () => resolve();
+      t.onerror = () => reject(t.error);
+    }));
+  }
+
+  /* ---- gpsOverrides（应用内手动补写的坐标） ----
+   * id 与 photos 一致（dirId:relPath），只有 { id, lat, lng, at } 四个字段。
+   * 写入成功后记一笔；扫描在文件 EXIF 读不到坐标时用它回填。 */
+  function allGpsOverrides() {
+    return open().then(db => new Promise((resolve, reject) => {
+      const req = db.transaction('gpsOverrides').objectStore('gpsOverrides').getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    }));
+  }
+  function putGpsOverrides(list) {
+    if (!list || !list.length) return Promise.resolve();
+    return open().then(db => new Promise((resolve, reject) => {
+      const t = db.transaction('gpsOverrides', 'readwrite');
+      const s = t.objectStore('gpsOverrides');
+      list.forEach(r => s.put(r));
       t.oncomplete = () => resolve();
       t.onerror = () => reject(t.error);
     }));
@@ -269,6 +299,7 @@ const DB = (() => {
   return {
     open, getSetting, setSetting, listDirs, addDir, removeDir,
     putPhoto, putPhotos, allPhotos, deletePhoto, clearPhotos, countPhotosByDir,
+    allGpsOverrides, putGpsOverrides,
     getAssets, putAssets, deleteAssets,
     stats, storageEstimate,
   };

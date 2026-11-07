@@ -9,6 +9,9 @@ const VIEWS = (() => {
     view: 'portfolio',
     album: null,
     filters: { year: '', camera: '', album: '' },
+    albumDepth: 1,          // 相册识别粒度：1=下一级、2=下两级、3=下三级
+    sortMode: 'timeNewest', // 作品集排序：默认「最新」，与改造前的顺序一致
+    albumSort: 'nameAsc',   // 相册集排序：顺序 / 逆序 / 随机，默认顺序
     lbList: [], lbIndex: 0,
   };
   const _urls = [];
@@ -28,6 +31,20 @@ const VIEWS = (() => {
     // 扫描中的增量刷新要保住用户当前浏览进度，否则每次刷新都被打回顶部
     const keepCount = _pager ? _pager.count() : 0;
     const keepY = window.scrollY;
+    // 相册粒度以库里的设置为准：重启或外部改过设置后也能对齐
+    const depth = clampDepth(await DB.getSetting('albumDepth', 1));
+    if (depth !== state.albumDepth) {
+      // 旧的相册键全部作废，避免筛选/详情仍指向已不存在的相册
+      state.albumDepth = depth;
+      state.album = null;
+      state.filters.album = '';
+    }
+    // 排序方式跟着设置走：重启或换窗口后保持上次选的
+    const sort = await DB.getSetting('sortMode', 'timeNewest');
+    if (SORT_IDS.includes(sort)) state.sortMode = sort;
+    const albumSort = await DB.getSetting('albumSortMode', 'nameAsc');
+    if (ALBUM_SORT_IDS.includes(albumSort)) state.albumSort = albumSort;
+    paintSort();
     state.photos = await DB.allPhotos();
     const dirs = await DB.listDirs();
     state.dirs = new Map(dirs.map(d => [d.id, d.name]));
@@ -40,9 +57,31 @@ const VIEWS = (() => {
     }
   }
 
+  /* 粒度只支持 1~3 级，缺失或非法值一律按「下一级」处理 */
+  function clampDepth(v) {
+    const n = Math.round(Number(v));
+    return n >= 1 && n <= 3 ? n : 1;
+  }
+
+  /* 相册键按目录深度切分：下一级取第一层子文件夹，它下面更深的子文件夹都并进同一相册；
+   * 下两级 / 下三级依次取前 2 / 3 层。直接放在图片库根目录的照片归到图片库自身。 */
   function albumKeyOf(p) {
-    const seg = p.relPath.split('/')[0];
-    return seg !== p.name ? seg : (state.dirs.get(p.dirId) || '未分类');
+    const folders = String(p.relPath || '').split('/').slice(0, -1).filter(Boolean);
+    if (!folders.length) return state.dirs.get(p.dirId) || '未分类';
+    return folders.slice(0, clampDepth(state.albumDepth)).join('/');
+  }
+
+  /* 设置页切换粒度：落库后按新粒度重算筛选与相册集，并退回相册列表 */
+  async function setAlbumDepth(depth) {
+    const d = clampDepth(depth);
+    if (d === state.albumDepth) return;
+    state.albumDepth = d;
+    state.album = null;
+    state.filters.album = '';
+    await DB.setSetting('albumDepth', d).catch(() => {});
+    buildFilterOptions();
+    applyFilters();
+    render();
   }
 
   /* ---------- 筛选 ---------- */
@@ -75,7 +114,22 @@ const VIEWS = (() => {
       if (album && albumKeyOf(p) !== album) return false;
       return true;
     });
-    $('#filter-count').textContent = state.filtered.length ? `${state.filtered.length} 张照片` : '';
+  }
+
+  /* 右上角统计：相册集显示「N 个相册/M 张照片」，其余视图仍只显示照片数 */
+  function updateCountLabel() {
+    const el = $('#filter-count');
+    if (!el) return;
+    const n = state.filtered.length;
+    if (!n) { el.textContent = ''; return; }
+    if (state.view === 'albums' && !state.album) {
+      // 相册数按当前粒度去重统计，与下方相册卡片数量保持一致
+      const keys = new Set();
+      for (const p of state.filtered) keys.add(albumKeyOf(p));
+      el.textContent = `${keys.size} 个相册/${n} 张照片`;
+      return;
+    }
+    el.textContent = `${n} 张照片`;
   }
 
   /* ---------- 渲染 ---------- */
@@ -83,6 +137,9 @@ const VIEWS = (() => {
     // 帮助页和设置页都是纯文字，筛选栏在这两页没有意义
     const plain = state.view === 'settings' || state.view === 'help';
     $('#filter-bar').classList.toggle('hidden', plain);
+    // 排序按钮：作品集 8 种、相册集 3 种；其他视图收起，重绘时顺手收起菜单
+    paintSort();
+    closeSortMenu();
     ['portfolio', 'timeline', 'albums', 'map', 'settings', 'help'].forEach(v =>
       $('#view-' + v).classList.toggle('hidden', v !== state.view));
     // 相册详情才显示顶栏的返回按钮；切到其他视图立即收起
@@ -99,6 +156,7 @@ const VIEWS = (() => {
     }
     updateBackTop();
     updateHelpToc();
+    updateCountLabel();
   }
 
   /* 返回顶端：只在作品集 / 时间轴 / 相册列表、且滚动超过 3 屏时出现。
@@ -387,7 +445,7 @@ const VIEWS = (() => {
   function renderPortfolio() {
     clearPagers();
     const grid = $('#portfolio-grid');
-    const list = sortedByDate(state.filtered);
+    const list = sortList(state.filtered);
     $('#portfolio-empty').classList.toggle('hidden', state.photos.length > 0);
 
     const masonry = setupMasonry(grid);
@@ -474,7 +532,9 @@ const VIEWS = (() => {
       a.items.push(p);
       if (!a.cover && (SCAN.thumbSync(p) || p.width)) a.cover = p;
     }
-    const albums = [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const albums = [...map.values()];
+    sortAlbums(albums);
+    paintSort();   // 相册列表显示排序按钮（返回按钮走的是本函数，不经过 render）
     albums.forEach(a => {
       const card = document.createElement('div');
       card.className = 'album-card';
@@ -495,6 +555,9 @@ const VIEWS = (() => {
     clearPagers();
     $('#albums-grid').classList.add('hidden');
     $('#album-back').classList.remove('hidden');
+    // 排序只针对相册列表，进相册详情后收起（卡片点击直接进本函数，不经过 render）
+    paintSort();
+    closeSortMenu();
     const detail = $('#album-detail');
     detail.classList.remove('hidden');
     const list = sortedByDate(state.filtered.filter(p => albumKeyOf(p) === state.album));
@@ -518,6 +581,146 @@ const VIEWS = (() => {
   /* ---- 排序与日期 ---- */
   function sortedByDate(list) {
     return [...list].sort((a, b) => (b.date || 0) - (a.date || 0));
+  }
+
+  /* ---- 作品集排序：方式与算法对齐本机 FrameFlow ---- */
+  const SORT_IDS = ['nameAsc', 'nameDesc', 'timeNewest', 'timeOldest',
+    'sizeLargest', 'sizeSmallest', 'random', 'newPreferred'];
+  /* 相册集只支持三种排序 */
+  const ALBUM_SORT_IDS = ['nameAsc', 'nameDesc', 'random'];
+  /* Chromium 的 zh-CN 排序即拼音序；numeric 让 1.jpg 排在 2.jpg 前，
+   * sensitivity:'base' 忽略大小写，与 FrameFlow 用的系统自然排序一致 */
+  const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
+
+  /* 拍摄时间：最新 / 最旧 / 新图优先一律以拍摄日期为准，不再看文件修改时间
+   * （写回 GPS、复制、整理目录都会改 mtime，用它排序照片会乱跳）。
+   * 扫描时为没有 EXIF 日期的照片把 mtime 写进了 date 做兜底，
+   * 这类记录的 date 与 mtime 完全相同，这里识别出来当作「无拍摄日期」：0 表示未知。 */
+  const shotOf = p => {
+    const d = Number(p.date) || 0;
+    const m = Number(p.mtime) || 0;
+    return (d && d !== m) ? d : 0;
+  };
+  const sizeOf = p => Number(p.size) || 0;
+
+  /* 相册集排序：按相册名拼音顺序 / 逆序 / 随机 */
+  function sortAlbums(albums) {
+    if (state.albumSort === 'random') {
+      for (let i = albums.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [albums[i], albums[j]] = [albums[j], albums[i]];
+      }
+      return albums;
+    }
+    const dir = state.albumSort === 'nameDesc' ? -1 : 1;
+    albums.sort((a, b) => dir * collator.compare(a.name || '', b.name || ''));
+    return albums;
+  }
+
+  /* 当前页面是否有排序按钮：作品集、相册列表（相册详情不算） */
+  function sortScope() {
+    if (state.view === 'portfolio') return 'portfolio';
+    if (state.view === 'albums' && !state.album) return 'albums';
+    return null;
+  }
+
+  /* 随机 / 新图优先每次重排都重新洗牌；名称与时间大小排序结果稳定 */
+  function sortList(list) {
+    const out = list.slice();
+    const mode = state.sortMode;
+    if (mode === 'random') {
+      for (let i = out.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [out[i], out[j]] = [out[j], out[i]];
+      }
+      return out;
+    }
+    if (mode === 'newPreferred') {
+      // 先按拍摄日期从新到旧，再做加权随机：越靠前可交换的范围越小，新图更容易留在前面；
+      // 没有拍摄日期的照片不参与洗牌，始终排在最后
+      out.sort((a, b) => shotOf(b) - shotOf(a));
+      const known = out.findIndex(p => !shotOf(p));
+      const n = known < 0 ? out.length : known;
+      for (let i = 0; i < n; i++) {
+        const rangeRatio = 0.3 + (i / n) * 0.6;
+        const maxOffset = Math.max(1, Math.min(n - i, Math.ceil(n * rangeRatio)));
+        const j = i + Math.floor(Math.random() * maxOffset);
+        if (j < n) [out[i], out[j]] = [out[j], out[i]];
+      }
+      return out;
+    }
+    if (mode === 'nameAsc' || mode === 'nameDesc') {
+      const dir = mode === 'nameDesc' ? -1 : 1;
+      out.sort((a, b) => dir * collator.compare(a.name || '', b.name || ''));
+      return out;
+    }
+    // 时间 / 大小：先取键再排序，比较回调里只做减法
+    if (mode === 'timeNewest' || mode === 'timeOldest') {
+      const desc = mode === 'timeNewest';
+      const keys = out.map(shotOf);
+      const idx = out.map((_, i) => i);
+      idx.sort((a, b) => {
+        const ka = keys[a], kb = keys[b];
+        // 无拍摄日期的照片两个方向都排在最后，并保持它们在筛选结果里的原有顺序
+        if (!ka || !kb) return ka ? -1 : (kb ? 1 : 0);
+        return desc ? kb - ka : ka - kb;
+      });
+      return idx.map(i => out[i]);
+    }
+    const keys = out.map(sizeOf);
+    const idx = out.map((_, i) => i);
+    const desc = mode === 'sizeLargest';
+    idx.sort((a, b) => (desc ? keys[b] - keys[a] : keys[a] - keys[b]));
+    return idx.map(i => out[i]);
+  }
+
+  /* 按钮图标直接取当前菜单项里的 SVG，避免图标维护两份。
+   * 同一套菜单按页面切换可用项：作品集 8 种，相册列表只留顺序 / 逆序 / 随机。 */
+  function paintSort() {
+    const scope = sortScope();
+    const ctl = $('#sort-control');
+    if (ctl) ctl.classList.toggle('hidden', !scope);
+    const ids = scope === 'albums' ? ALBUM_SORT_IDS : SORT_IDS;
+    const mode = scope === 'albums' ? state.albumSort : state.sortMode;
+    document.querySelectorAll('.sort-item').forEach(b => {
+      const usable = ids.includes(b.dataset.sort);
+      b.classList.toggle('hidden', !usable);
+      const on = usable && b.dataset.sort === mode;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+    const item = document.querySelector(`.sort-item[data-sort="${mode}"]`);
+    const cur = $('#sort-current');
+    const icon = item && item.querySelector('.sort-item-icon');
+    if (cur && icon) cur.innerHTML = icon.innerHTML;
+    const btn = $('#sort-btn');
+    const label = item && item.querySelector('.sort-item-label');
+    if (btn && label) btn.title = '排序方式：' + label.textContent;
+  }
+
+  function closeSortMenu() {
+    const menu = $('#sort-menu');
+    const btn = $('#sort-btn');
+    if (menu) menu.classList.add('hidden');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+  }
+
+  async function setSortMode(mode) {
+    const scope = sortScope();
+    const ids = scope === 'albums' ? ALBUM_SORT_IDS : SORT_IDS;
+    if (!ids.includes(mode)) return;
+    closeSortMenu();
+    if (scope === 'albums') {
+      state.albumSort = mode;
+      paintSort();
+      renderAlbums();
+      await DB.setSetting('albumSortMode', mode).catch(() => {});
+      return;
+    }
+    state.sortMode = mode;
+    paintSort();
+    if (state.view === 'portfolio') render();
+    await DB.setSetting('sortMode', mode).catch(() => {});
   }
   function fmtDate(ts) {
     const d = new Date(ts);
@@ -754,6 +957,29 @@ const VIEWS = (() => {
     $('#filter-camera').addEventListener('change', e => { state.filters.camera = e.target.value; applyFilters(); render(); });
     $('#filter-album').addEventListener('change', e => { state.filters.album = e.target.value; applyFilters(); render(); });
     $('#album-back').addEventListener('click', () => { state.album = null; renderAlbums(); });
+
+    // 作品集排序：点按钮开合菜单，点菜单项生效，点空白处或 Esc 收起
+    const sortBtn = $('#sort-btn');
+    const sortMenu = $('#sort-menu');
+    const sortCtl = $('#sort-control');
+    if (sortBtn && sortMenu) {
+      sortBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        if (sortMenu.classList.contains('hidden')) {
+          sortMenu.classList.remove('hidden');
+          sortBtn.setAttribute('aria-expanded', 'true');
+        } else {
+          closeSortMenu();
+        }
+      });
+      sortMenu.addEventListener('click', e => {
+        const item = e.target.closest('.sort-item');
+        if (item) setSortMode(item.dataset.sort);
+      });
+      if (sortCtl) document.addEventListener('click', e => { if (!sortCtl.contains(e.target)) closeSortMenu(); });
+      document.addEventListener('keydown', e => { if (e.key === 'Escape') closeSortMenu(); });
+      paintSort();
+    }
     $('#lb-close').addEventListener('click', closeLb);
     $('#lb-prev').addEventListener('click', () => lbStep(-1));
     $('#lb-next').addEventListener('click', () => lbStep(1));
@@ -764,9 +990,9 @@ const VIEWS = (() => {
     $('#lb-gps').addEventListener('click', () => {
       const p = state.lbList[state.lbIndex];
       if (!p) return;
-      if (typeof GPSEDIT === 'undefined') return;
+      if (typeof MAPPICK === 'undefined' || typeof MAPPICK.openPhotos !== 'function') return;
       closeLb();
-      GPSEDIT.open([p], '标记 GPS · ' + (p.name || ''));
+      MAPPICK.openPhotos([p], '标记 GPS · ' + (p.name || ''));
     });
     $('#lb-reveal').addEventListener('click', () => {
       const p = state.lbList[state.lbIndex];
@@ -811,7 +1037,10 @@ const VIEWS = (() => {
       else if (e.key === 'ArrowRight') lbStep(1);
       else if (e.key === 'g' || e.key === 'G') {
         const p = state.lbList[state.lbIndex];
-        if (p && typeof GPSEDIT !== 'undefined') { closeLb(); GPSEDIT.open([p], '标记 GPS · ' + (p.name || '')); }
+        if (p && typeof MAPPICK !== 'undefined' && typeof MAPPICK.openPhotos === 'function') {
+          closeLb();
+          MAPPICK.openPhotos([p], '标记 GPS · ' + (p.name || ''));
+        }
       } else if (e.key === 'r' || e.key === 'R') {
         const p = state.lbList[state.lbIndex];
         if (p) revealPhoto(p);
@@ -871,5 +1100,5 @@ const VIEWS = (() => {
     fillMedia(el, p, true);
   }
 
-  return { init, reload, render, state, openLightbox, thumbInto, revealPhoto };
+  return { init, reload, render, state, openLightbox, thumbInto, revealPhoto, setAlbumDepth, albumKeyOf };
 })();

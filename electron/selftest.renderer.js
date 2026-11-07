@@ -17,15 +17,14 @@ async function (dir) {
 
     // 等 boot 把自己的活干完，避免两边同时开库
     for (let i = 0; i < 60; i++) {
-      const t = document.querySelector('#dir-perm-text');
-      if (t && t.textContent.indexOf('正在检查') < 0) break;
+      if (window.__COVE_BOOTED) break;
       await wait(50);
     }
 
     // 磁盘访问层就绪 + 引导层没有误判（上一版这里查的是 PLATFORM.kind/isDesktop，
     // 那两个字段随网页版一起删掉了）
     const api = ['pickDirectory', 'newDirRecord', 'isSameDir', 'queryPermission',
-      'walk', 'resolveFile', 'openFile', 'imageUrl', 'launchGpsStamp'];
+      'walk', 'resolveFile', 'openFile', 'imageUrl'];
     const missing = api.filter(k => typeof PLATFORM[k] !== 'function');
     check('磁盘访问层方法齐全', missing.length === 0, '缺 ' + missing.join(', '));
     check('未落入浏览器引导层', !document.body.classList.contains('gated'));

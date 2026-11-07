@@ -117,37 +117,6 @@
     });
   }
 
-  /* ============ 路径工具 ============
-   * 地图页要把「图片库根路径 + 相对子目录」拼成本机绝对路径交给 GPSStamp，
-   * 这里是那两处共用的拼接与规范化。 */
-  function normDir(p) {
-    return String(p == null ? '' : p).trim()
-      .replace(/^["']+|["']+$/g, '')   // 粘贴时常常带引号
-      .replace(/[\\/]+$/, '');          // 去掉结尾斜杠
-  }
-  function joinPath(base, rel) {
-    const b = normDir(base);
-    const r = String(rel || '').replace(/^[\\/]+/, '').replace(/\//g, '\\');
-    return r ? b + '\\' + r : b;
-  }
-
-  /* 唤起本机 GPSStamp：直接起进程，带 --missing-only，只载入缺 GPS 的照片。 */
-  function launchGpsStamp(folder) {
-    let pr = null;
-    try {
-      pr = PLATFORM.launchGpsStamp(folder);
-    } catch (e) {
-      toast('无法启动 GPSStamp：' + (e && e.message || e), true);
-      return;
-    }
-    if (pr && typeof pr.then === 'function') {
-      pr.then(r => {
-        if (r && r.ok === false) { toast('无法启动 GPSStamp：' + (r.error || '未知原因'), true); return; }
-        toast('已打开 GPSStamp，只载入了该文件夹里没有 GPS 的照片');
-      }).catch(e => toast('无法启动 GPSStamp：' + (e && e.message || e), true));
-    }
-  }
-
   /* ============ 目录可读性 ============
    * 桌面端没有"授权"这回事，这里回答的是"这个目录现在还能不能读"——
    * 外接盘被拔掉、文件夹被改名或挪走，都会让目录变成不可读。
@@ -175,23 +144,9 @@
     return unreadableDirs().length === 0;
   }
 
-  /* 设置页状态条 + 设置标签上的红点，两处同步 */
+  /* 设置标签上的红点：有目录读不到时提醒一句，其余状态不打扰 */
   function paintDirState() {
     const pending = unreadableDirs().length;
-    const text = $('#dir-perm-text');
-    if (text) {
-      if (!_dirsCache.length) {
-        text.textContent = '还没有添加图片库目录';
-        text.className = 'dir-perm-text';
-      } else if (pending) {
-        text.innerHTML = `有 <b>${pending}</b> 个目录当前读不到：盘没连接，或文件夹被改名/移动了`;
-        text.className = 'dir-perm-text warn';
-      } else {
-        text.innerHTML = `${_dirsCache.length} 个目录可正常读取`;
-        text.className = 'dir-perm-text ok';
-      }
-    }
-    // 设置页导航加标记，避免用户在当前页面找不到入口
     const nav = document.querySelector('.nav-btn[data-view="settings"]');
     if (nav) {
       nav.classList.toggle('has-alert', pending > 0);
@@ -204,8 +159,8 @@
     const dirs = await DB.listDirs();
     _dirsCache = dirs;
     // 列表要画「可读取 / 不可用」的徽章，而可读性结论在 readableMap 里。
-    // 新加入的目录若还没进这张表，先补一次，否则会先画成「不可用」、
-    // 再被状态条纠正成「可正常读取」，同一屏给出两个相反结论。
+    // 新加入的目录若还没进这张表，先补一次，否则这一行会先画成「不可用」、
+    // 再被纠正成「可读取」，同一屏给出两个相反结论。
     if (dirs.some(d => !readableMap.has(d.id))) await refreshReadable(dirs);
     const counts = await DB.countPhotosByDir();
     const ul = $('#dir-list');
@@ -228,11 +183,15 @@
       name.className = 'dir-name';
       name.textContent = d.name;
       name.title = d.name;
-      const badge = document.createElement('span');
-      badge.className = 'dir-badge ' + (readable ? 'ok' : 'warn');
-      badge.textContent = readable ? '可读取' : '不可用';
       line.appendChild(name);
-      line.appendChild(badge);
+      // 只在读不到时才挂徽章：正常读取不必占位提示
+      if (!readable) {
+        const badge = document.createElement('span');
+        badge.className = 'dir-badge warn';
+        badge.textContent = '不可用';
+        badge.title = '该文件夹当前读不到：盘未连接，或文件夹被改名/移动了';
+        line.appendChild(badge);
+      }
       main.appendChild(line);
 
       const pathEl = document.createElement('span');
@@ -250,7 +209,7 @@
 
       const scan = document.createElement('button');
       scan.className = 'btn btn-small dir-scan' + (readable ? '' : ' btn-ghost');
-      scan.textContent = '扫描';
+      scan.textContent = '重新扫描';
       scan.disabled = _scanning;
       if (!readable) scan.title = '该文件夹当前读不到：盘未连接、或被改名/移动了';
       scan.addEventListener('click', () => { runScan({ dirId: d.id }); });
@@ -286,8 +245,6 @@
   /* 扫描期间禁用所有扫描相关按钮，结束后恢复 */
   function setScanBusy(busy) {
     document.querySelectorAll('.dir-scan').forEach(b => { b.disabled = busy; });
-    const all = $('#rescan-all');
-    if (all) all.disabled = busy;
     const raw = $('#rescan-raw');
     if (raw && !raw.classList.contains('hidden')) raw.disabled = busy;
   }
@@ -319,13 +276,15 @@
   let _scanning = false;
   let _reloadQueued = false;
   async function incrementalReload() {
-    // 防抖：扫描期间每 1.5s 最多刷新一次视图，让照片边扫边出现
+    /* 防抖：扫描期间让照片边扫边出现，但刷新一次 `VIEWS.reload()` 要把全部记录
+     * 从 IndexedDB 读出来重排——空库 13ms，4.7 万条时 251ms。原来每 1.5 秒刷一次，
+     * 扫描后期约有 15% 的时间花在这上面，这里放宽到 5 秒。 */
     if (_reloadQueued) return;
     _reloadQueued = true;
     setTimeout(async () => {
       _reloadQueued = false;
       await VIEWS.reload();
-    }, 1500);
+    }, 5000);
   }
 
   async function runScan(opts = {}) {
@@ -340,16 +299,10 @@
     if (blocked.length) {
       const names = blocked.map(d => `「${d.name}」`).join('');
       setStatus('目录不可用');
-      toast(`${names}当前读不到：盘未连接，或文件夹被改名/移动了。插回盘后点「重新检查」即可`, true);
+      toast(`${names}当前读不到：盘未连接，或文件夹被改名/移动了。插回盘后再点一次「重新扫描」即可`, true);
       const nav = document.querySelector('.nav-btn[data-view="settings"]');
       if (nav && !nav.classList.contains('active')) nav.click();
       await renderDirList();
-      const bar = $('#dir-perm-bar');
-      if (bar) {
-        bar.classList.add('flash');
-        setTimeout(() => bar.classList.remove('flash'), 1600);
-        if (typeof bar.scrollIntoView === 'function') bar.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      }
       return;
     }
 
@@ -432,17 +385,14 @@
       const st = await DB.stats();
       const dirs = await DB.listDirs();
       if (readableMap.size !== dirs.length) await refreshReadable(dirs).catch(() => {});
-      const readable = dirs.filter(d => isReadable(d.id)).length;
       const fmt = n => (n || 0).toLocaleString('zh-CN');
       const lines = [
         `照片记录 <b>${fmt(st.total)}</b> · 缩略图缓存 <b>${fmt(st.assets)}</b>`,
         `待生成 ${fmt(st.pending)} · 失败 ${fmt(st.error)} · 不可用 ${fmt(st.unavailable)}`,
-        `目录可读取 ${readable}/${dirs.length}`,
       ];
 
       const se = await DB.storageEstimate();
       if (se) lines.push(`当前占用 <b>${fmtBytes(se.usage)}</b>`);
-      lines.push('数据位置 <b>程序目录的 data\\</b> <span class="diag-dim">随文件夹一起搬走</span>');
       if (SCAN.storageError()) lines.push('<span class="diag-warn">最近一次缩略图写库失败，多半是磁盘空间不足</span>');
       el.innerHTML = lines.join('<br>');
     } catch (e) {
@@ -459,7 +409,7 @@
     const navSettings = document.querySelector('.nav-btn[data-view="settings"]');
     if (navSettings) {
       navSettings.addEventListener('click', () => {
-        renderDirList().catch(() => {});
+        refreshReadable().then(() => renderDirList()).catch(() => {});
         renderStorageInfo().catch(() => {});
       });
     }
@@ -479,6 +429,18 @@
       });
     });
 
+    // 相册识别粒度：决定相册集与「全部相册」筛选按目录的哪一层切分
+    const granBtns = document.querySelectorAll('#album-gran-group .seg-btn');
+    const paintGran = v => granBtns.forEach(b => b.classList.toggle('active', Number(b.dataset.gran) === v));
+    DB.getSetting('albumDepth', 1).then(v => paintGran(Number(v) || 1)).catch(() => {});
+    granBtns.forEach(b => {
+      b.addEventListener('click', async () => {
+        const d = Number(b.dataset.gran) || 1;
+        paintGran(d);
+        await VIEWS.setAlbumDepth(d);
+      });
+    });
+
     // RAW 开关
     DB.getSetting('rawEnabled', false).then(v => {
       $('#raw-toggle').checked = !!v;
@@ -489,7 +451,7 @@
       await DB.setSetting('rawEnabled', e.target.checked);
       SCAN.setRawEnabled(e.target.checked);
       $('#rescan-raw').classList.toggle('hidden', !e.target.checked);
-      if (e.target.checked) toast('RAW 支持已开启，点击「重建 RAW 索引」处理已有的 RAW 文件');
+      if (e.target.checked) toast('已开启 RAW 预览提取，点「重建 RAW 索引」处理已有的 RAW 文件');
     });
     $('#rescan-raw').addEventListener('click', async () => {
       if (_scanning) return;
@@ -504,45 +466,18 @@
       toast(`RAW 索引重建完成：登记 ${rep.processed} 个文件，打开照片时按需生成预览`);
     });
 
-    // 维护
-    $('#rescan-all').addEventListener('click', () => runScan());
+    // 清空索引：删掉缩略图与照片记录，保留目录列表，之后点各目录的「重新扫描」重建
     $('#clear-db').addEventListener('click', async () => {
       const ok = await confirmDialog({
-        title: '清空本地索引',
-        message: '确定清空本地索引？\n\n所有缩略图、预览和照片记录都会被删除，图片库目录列表会保留。\n原图不受影响，之后点各目录的「扫描」即可重建。',
-        okText: '清空',
+        title: '清空索引',
+        message: '确定清空索引？\n\n所有缩略图、预览和照片记录都会被删除，图片库目录列表会保留。\n原图不受影响，之后点各目录的「重新扫描」即可重建。',
+        okText: '清空索引',
       });
       if (!ok) return;
       await DB.clearPhotos();
       await VIEWS.reload();
       await renderDirList();
-      toast('本地索引已清空');
-    });
-
-    // 重新检查：插拔过外接盘、或在资源管理器里改过文件夹名之后，手动核对一次
-    let _rechecking = false;
-    $('#perm-recheck').addEventListener('click', async () => {
-      if (_rechecking) return;
-      _rechecking = true;
-      const btn = $('#perm-recheck');
-      if (btn) { btn.disabled = true; btn.textContent = '检查中…'; }
-      try {
-        await refreshReadable();
-        await renderDirList();
-        renderStorageInfo().catch(() => {});
-        SCAN.clearMem();
-        SCAN.clearFailed();
-        await VIEWS.reload().catch(() => {});
-        const n = unreadableDirs().length;
-        toast(n === 0
-          ? `已重新核对：${_dirsCache.length} 个目录均可正常读取`
-          : `重新核对完成：仍有 ${n} 个目录读不到，插回盘或恢复文件夹后即可`);
-      } catch (e) {
-        toast('重新检查失败：' + (e && e.message || e));
-      } finally {
-        _rechecking = false;
-        if (btn) { btn.disabled = false; btn.textContent = '重新检查'; }
-      }
+      toast('索引已清空');
     });
   }
 
@@ -552,7 +487,7 @@
     const el = document.createElement('div');
     el.className = 'banner banner-warn';
     el.innerHTML = '本地索引打开失败（可能是索引版本升级、存储空间不足，或另一个标签页正占用着本页面）。'
-      + '请关闭其他标签页后刷新；仍不行就到「设置 → 维护 → 清空本地索引」，再对各目录重新扫描。'
+      + '请关闭其他标签页后刷新；仍不行就到「设置 → 图片库 → 清空索引」，再对各目录点「重新扫描」。'
       + `<br><span style="opacity:.7;font-size:12px">${String(e && e.message || e)}</span>`;
     document.body.insertBefore(el, document.body.firstChild);
   }
@@ -561,6 +496,7 @@
     if (!checkCompat()) return;
     VIEWS.init();
     if (typeof GPSEDIT !== 'undefined' && GPSEDIT) GPSEDIT.init();
+    if (typeof MAPPICK !== 'undefined' && MAPPICK) MAPPICK.init();
     applyTheme().catch(() => {});
     // 必须先确认目录是否可读再渲染：读不到的目录会让每张缩略图解码立即失败。
     await refreshReadable().catch(() => {});
@@ -572,12 +508,12 @@
     renderDirList().catch(() => {});
     bindSettings();
     renderStorageInfo().catch(() => {});
+    window.__COVE_BOOTED = true;   // 自测脚本等这个标记，再确认页面已就绪
   }
 
-  /* 供地图页等其他模块复用：路径拼接、唤起 GPSStamp、提示条 */
+  /* 供地图页等其他模块复用：提示条与确认框 */
   window.APP = {
     toast, confirmDialog,
-    launchGpsStamp, normDir, joinPath,
   };
 
   document.addEventListener('DOMContentLoaded', boot);

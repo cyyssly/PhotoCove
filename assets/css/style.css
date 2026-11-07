@@ -93,6 +93,36 @@ a { color: var(--accent); }
 }
 .filter-count { font-size: 13px; color: var(--text-dim); margin-left: auto; }
 
+/* ============ 作品集排序（按钮显示当前排序图标，点开选方式） ============ */
+.sort-control { position: relative; flex: 0 0 auto; }
+.sort-btn {
+  width: 30px; height: 30px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg-card); color: var(--text-dim);
+  border: 1px solid var(--border); border-radius: 7px; cursor: pointer;
+}
+.sort-btn:hover { color: var(--text); border-color: var(--text-dim); }
+.sort-btn[aria-expanded="true"] { color: var(--accent); border-color: var(--accent); }
+.sort-current svg { width: 15px; height: 15px; display: block; }
+.sort-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 80;
+  min-width: 152px; padding: 4px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 9px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .38);
+}
+.sort-item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 7px 8px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--text); font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.sort-item:hover { background: var(--bg-elev); }
+.sort-item.on { color: var(--accent); background: var(--accent-dim); }
+.sort-item-icon { flex: 0 0 auto; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
+.sort-item-icon svg { width: 14px; height: 14px; display: block; }
+.sort-item-label { flex: 1; }
+.sort-check { flex: 0 0 auto; width: 13px; opacity: 0; }
+.sort-item.on .sort-check { opacity: 1; }
+
 /* ============ 占位块（缩略图按需生成前） ============ */
 .ph {
   width: 100%; background: var(--img-bg);
@@ -212,23 +242,8 @@ a { color: var(--accent); }
 .seg-group { display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .seg-btn { background: none; border: none; color: var(--text-dim); padding: 7px 14px; cursor: pointer; font-size: 13px; }
 .seg-btn.active { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
-/* ---------- 目录授权条（常驻） ---------- */
-.dir-perm-bar {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  padding: 9px 12px; border-radius: 8px; margin-bottom: 12px;
-  background: var(--bg-elev); border: 1px solid var(--border);
-  font-size: 12.5px; transition: box-shadow .3s, border-color .3s;
-}
-.dir-perm-bar.flash {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-dim);
-}
-.dir-perm-text { color: var(--text-dim); flex: 1; min-width: 180px; line-height: 1.5; }
-.dir-perm-text.warn { color: var(--warn); }
-.dir-perm-text.ok { color: var(--ok); }
-.dir-perm-text b { font-size: 13.5px; }
 
-/* ---------- 目录列表 ---------- */
+/* ---------- 图片库：列表 + 底部按钮 ---------- */
 .dir-list { list-style: none; margin-bottom: 12px; }
 .dir-list li {
   display: flex; align-items: center; justify-content: space-between;
@@ -254,9 +269,21 @@ a { color: var(--accent); }
   font-size: 11px; padding: 2px 7px; border-radius: 20px;
   border: 1px solid transparent; white-space: nowrap; flex: 0 0 auto;
 }
-.dir-badge.ok { color: var(--ok); border-color: currentColor; background: rgba(111, 184, 122, .1); }
 .dir-badge.warn { color: var(--warn); border-color: currentColor; background: rgba(232, 176, 75, .14); }
 .dir-list .dir-stats { color: var(--text-dim); font-size: 12px; margin-right: 3px; white-space: nowrap; }
+.dir-footer { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+/* 图片库里的按钮（列表行的重新扫描/移除、底部的添加/重建/清空）统一高度，
+ * 宽度随文字自然增长。实心按钮也留 1px 透明边框，跟描边按钮共用同一个内容盒，
+ * 否则两者内容区差 2px，肉眼看就是"一个高一个矮"。 */
+#dir-list .btn,
+.dir-footer .btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 30px; min-height: 30px; padding: 0 12px; margin: 0;
+  border: 1px solid transparent;
+  font-size: 12.5px; line-height: 1; white-space: nowrap; flex: 0 0 auto;
+}
+#dir-list .btn-ghost,
+.dir-footer .btn-ghost { border-color: var(--border); }
 
 .btn {
   background: var(--accent); color: #14161a; border: none;
@@ -406,7 +433,11 @@ a { color: var(--accent); }
 /* 高度扣掉吸顶导航(54px)与筛选栏，避免地图把页面撑出滚动条。
  * z-index:0 让本区块形成独立层叠上下文：Leaflet 内部 z-index 最高到 1000，
  * 若不隔离会盖住全局 Lightbox / toast 等浮层。 */
-#view-map { padding: 0; height: calc(100vh - 100px); min-height: 340px; position: relative; z-index: 0; }
+#view-map {
+  padding: 0; height: calc(100vh - 100px); min-height: 340px; position: relative; z-index: 0;
+  /* 右下坐标条与「无位置信息」下拉共用同一宽度，视觉上对齐成一列 */
+  --map-bar-w: 320px;
+}
 #view-map .map-container {
   position: absolute; inset: 0; width: 100%; height: 100%;
   background: var(--img-bg);
@@ -425,9 +456,9 @@ a { color: var(--accent); }
 .map-empty-card p { margin: 0; }
 .map-empty-card p + p { margin-top: 4px; font-size: 12.5px; color: var(--text-dim); }
 
+/* 带位置照片统计（左下角） */
 .map-stats {
-  position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%);
-  z-index: 900; pointer-events: none;
+  position: absolute; bottom: 12px; left: 12px; z-index: 900; pointer-events: none;
   padding: 5px 14px; border-radius: 20px;
   background: rgba(20, 22, 26, .82); color: #e6e8ea;
   font-size: 12px; letter-spacing: .2px;
@@ -436,34 +467,53 @@ a { color: var(--accent); }
 }
 .map-stats b { color: var(--accent); }
 
-/* 无 GPS 照片入口：左下角胶囊 + 右侧可滚动缩略图面板 */
+/* 无 GPS 照片入口：右上角一行胶囊，点开后由 #map-nogps-panel 在同一处向下展开 */
 .map-nogps {
-  position: absolute; left: 12px; bottom: 12px; z-index: 1000;
+  position: absolute; top: 12px; right: 12px; z-index: 1200;
   padding: 7px 14px; border-radius: 18px; cursor: pointer;
   background: rgba(20, 22, 26, .86); color: #e6e8ea;
   border: 1px solid rgba(255, 255, 255, .14);
   font-family: inherit; font-size: 12px; line-height: 1.2;
   box-shadow: 0 2px 10px rgba(0,0,0,.3);
   backdrop-filter: blur(6px);
+  transition: right .15s ease-out;
 }
 .map-nogps:hover { border-color: var(--accent); color: var(--accent); }
+/* 展开方向指示：收起状态只有这一行，▾ 表示可以往下展开 */
+.map-nogps::after { content: '▾'; margin-left: 7px; opacity: .75; }
+/* 展开后胶囊整条让位给面板（面板就长在它原来的位置），不再保留这一行 */
+.map-nogps.open { display: none; }
+/* 补位置工作台占住右栏时，胶囊让到它左边（与右下角坐标条同一策略） */
+#map.pick-open ~ #map-nogps { right: 332px; }
+/* 面板顶在胶囊原来的位置（top 12 / right 12）向下展开：
+ * 收起时是一行胶囊，展开后由面板接管这块角落，两者不并存。 */
 .map-nogps-panel {
-  position: absolute; top: 12px; right: 12px; bottom: 12px; z-index: 1100;
-  width: 300px; max-width: calc(100% - 24px);
+  position: absolute; top: 12px; right: 12px; z-index: 1100;
+  width: var(--map-bar-w); max-width: calc(100% - 24px);
+  /* 顶部 12 + 底部留 52：右下角坐标条占 [12, ~50]，别把它盖住 */
+  max-height: calc(100% - 64px);
   display: flex; flex-direction: column; overflow: hidden;
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
   box-shadow: 0 8px 26px rgba(0,0,0,.45);
 }
+/* 向下展开的入场：从胶囊下方轻轻落下 */
+.map-nogps-panel:not(.hidden) { animation: nogps-drop .14s ease-out; }
+@keyframes nogps-drop { from { opacity: 0; transform: translateY(-6px); } }
+/* 面板头就是原来那一行胶囊的替身：同一处、同一行高、同样左对齐的读数 */
 .map-nogps-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 10px 12px; border-bottom: 1px solid var(--border);
-  font-size: 12.5px; color: var(--text-dim);
+  padding: 9px 10px 9px 14px; border-bottom: 1px solid var(--border);
+  font-size: 12.5px; color: var(--text);
 }
 .map-nogps-close {
-  background: none; border: none; color: var(--text-dim);
-  font-size: 20px; line-height: 1; cursor: pointer;
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0; border-radius: 6px;
+  background: none; border: 1px solid transparent; color: var(--text-dim);
+  font-family: inherit; font-size: 13px; line-height: 1; cursor: pointer;
 }
-.map-nogps-close:hover { color: var(--text); }
+.map-nogps-close:hover {
+  color: var(--accent); border-color: var(--accent); background: var(--bg-elev);
+}
 .map-nogps-list {
   flex: 1; overflow-y: auto; padding: 10px;
   display: flex; flex-direction: column; gap: 8px;
@@ -485,7 +535,7 @@ a { color: var(--accent); }
   display: block; margin-top: 3px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* 文件夹行：缩略图 + 名称 + 张数 */
+/* 相册行：缩略图 + 名称 + 张数 */
 .nogps-folder {
   display: grid; grid-template-columns: 46px minmax(0, 1fr) auto;
   align-items: center; gap: 10px; width: 100%;
@@ -556,12 +606,224 @@ a { color: var(--accent); }
 .map-popup h4 { margin: 0 0 4px; font-size: 13.5px; font-weight: 600; }
 .map-popup-coord { color: var(--text-dim); font-size: 11.5px; margin-top: 4px; }
 
-/* 缩放控件与版权条 */
-.leaflet-control-zoom a {
-  background: var(--bg-card) !important; color: var(--text) !important;
-  border-color: var(--border) !important;
+/* ---------- 左上角工具行：地名搜索 + 缩放按钮 ---------- */
+.map-search {
+  position: absolute; top: 12px; left: 12px; z-index: 1200;
+  width: 420px; max-width: calc(100% - 24px);
 }
-.leaflet-control-zoom a:hover { background: var(--bg-elev) !important; }
+.map-search-row { display: flex; align-items: stretch; gap: 8px; }
+.map-search-box {
+  flex: 1 1 auto; min-width: 0;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 5px 5px 10px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .32);
+  transition: border-color .15s;
+}
+.map-search-box:focus-within { border-color: var(--accent); }
+.map-search-box input {
+  flex: 1; min-width: 0; height: 26px; padding: 0;
+  background: transparent; border: none; outline: none;
+  color: var(--text); font-family: inherit; font-size: 13px;
+}
+.map-search-box input::placeholder { color: var(--text-dim); }
+.map-search-btn {
+  flex: 0 0 auto; height: 28px; padding: 0 12px;
+  border-radius: 7px; border: 1px solid transparent;
+  background: var(--accent-dim); color: var(--accent);
+  font-family: inherit; font-size: 12.5px; line-height: 1; cursor: pointer;
+}
+.map-search-btn:hover { border-color: var(--accent); }
+.map-search-btn:disabled { opacity: .55; cursor: default; }
+
+/* 缩放按钮：紧跟搜索框，横向排列的两个图标，与搜索框同高同卡片风格 */
+.map-zoom { flex: 0 0 auto; display: flex; }
+.map-zoom-btn {
+  width: 40px;
+  background: var(--bg-card); border: 1px solid var(--border);
+  color: var(--text); font-family: inherit; font-size: 18px; line-height: 1; cursor: pointer;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .32);
+}
+.map-zoom-btn:first-child { border-radius: 10px 0 0 10px; }
+.map-zoom-btn:last-child { border-radius: 0 10px 10px 0; border-left: none; }
+.map-zoom-btn:hover { border-color: var(--accent); color: var(--accent); }
+.map-zoom-btn:active { background: var(--bg-elev); }
+.map-zoom-btn:disabled { opacity: .45; cursor: default; }
+
+.map-results {
+  margin-top: 6px; max-height: 272px; overflow-y: auto; padding: 4px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .42);
+}
+.map-result {
+  display: block; width: 100%; text-align: left; padding: 7px 9px;
+  border: none; border-radius: 7px; background: none;
+  color: var(--text); font-family: inherit; cursor: pointer;
+}
+.map-result.on, .map-result:hover { background: var(--accent-dim); }
+.map-result-label { display: block; font-size: 12.5px; }
+.map-result-detail {
+  display: block; font-size: 11px; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.map-result-hint { padding: 9px; font-size: 12px; line-height: 1.65; color: var(--text-dim); }
+
+/* ---------- 当前选点（右下角，与左下角统计条同高；压住版权条没关系） ---------- */
+.map-pick-bar {
+  position: absolute; right: 12px; bottom: 12px; z-index: 1100;
+  width: var(--map-bar-w);
+  display: flex; align-items: center; gap: 9px;
+  max-width: calc(100% - 24px); padding: 5px 6px 5px 12px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, .32);
+  font-size: 12px; line-height: 1.3;
+}
+/* 坐标条钉死在右下角：补位置工作台打开时由面板自己往上收（见 .pick-panel 的 bottom），
+ * 不让坐标条横着跳走——它是写入选中的那组坐标，位置越稳越好找。 */
+.map-pick-title { color: var(--text-dim); white-space: nowrap; }
+.map-pick-coord {
+  font-family: Consolas, monospace; font-variant-numeric: tabular-nums;
+  color: var(--accent); white-space: nowrap;
+}
+.map-pick-clear {
+  flex: 0 0 auto; margin-left: auto; height: 26px; padding: 0 10px;
+  border-radius: 7px; border: 1px solid var(--border); background: transparent;
+  color: var(--text-dim); font-family: inherit; font-size: 12px; line-height: 1; cursor: pointer;
+}
+.map-pick-clear:hover { color: var(--text); border-color: var(--accent); }
+
+/* 选点标记：空心圆环 + 中心点，与实心的照片点位一眼区分 */
+.map-pick-marker {
+  width: 24px; height: 24px; border-radius: 50%;
+  border: 3px solid var(--accent); background: rgba(232, 176, 75, .18);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .5);
+  display: flex; align-items: center; justify-content: center;
+  cursor: grab;
+}
+.map-pick-marker:active { cursor: grabbing; }
+.map-pick-marker span {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+}
+
+/* ---------- 补位置工作台（右栏） ----------
+ * 与「无位置信息」面板同一块位置：进工作台时那张列表会收起来，
+ * 免得两个绝对定位的栏叠在一起。
+ * 底边停在 52px，给右下角坐标条（12~50）让出位置——坐标条因此不用横向移动，
+ * 面板也不会压住它。 */
+.pick-panel {
+  position: absolute; top: 12px; right: 12px; bottom: 52px; z-index: 1100;
+  width: 320px; max-width: calc(100% - 24px);
+  display: flex; flex-direction: column; overflow: hidden;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .45);
+}
+.pick-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 8px 9px 12px; border-bottom: 1px solid var(--border);
+}
+.pick-title {
+  flex: 1; min-width: 0; font-size: 12.5px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.pick-count { font-size: 11.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pick-x {
+  flex: 0 0 auto; width: 24px; height: 24px; border-radius: 6px;
+  border: 1px solid transparent; background: none; color: var(--text-dim);
+  font-size: 18px; line-height: 1; cursor: pointer;
+}
+.pick-x:hover { color: var(--text); border-color: var(--border); }
+
+.pick-tools {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 7px 12px; border-bottom: 1px solid var(--border);
+}
+.pick-tip { min-width: 0; color: var(--text-dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 工具行最右端的三个图标按钮：返回 → 列表 / 缩略图（都不带文字，省宽度）。
+ * 返回只在从「无位置信息」列表点相册进来时出现，退回那张列表接着挑下一个相册。 */
+.pick-views { display: flex; align-items: center; gap: 4px; margin-left: auto; flex: 0 0 auto; }
+.pick-icon {
+  flex: 0 0 auto; width: 24px; height: 24px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px; border: 1px solid var(--border); background: transparent;
+  color: var(--text-dim); cursor: pointer;
+}
+.pick-icon svg { width: 13px; height: 13px; display: block; }
+.pick-icon:hover { color: var(--text); border-color: var(--text-dim); }
+.pick-icon.on { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+
+.pick-check {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--text-dim); cursor: pointer;
+}
+.pick-check input { accent-color: var(--accent); }
+
+.pick-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
+.pick-item {
+  display: grid; grid-template-columns: auto 46px minmax(0, 1fr); gap: 9px;
+  align-items: center; padding: 5px 6px; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent;
+}
+.pick-item:hover { background: var(--bg-elev); }
+.pick-item.on { border-color: var(--accent-dim); background: var(--accent-dim); }
+.pick-item input { accent-color: var(--accent); }
+.pick-thumb {
+  width: 46px; height: 46px; border-radius: 5px; overflow: hidden;
+  background: var(--img-bg); display: block;
+}
+.pick-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pick-meta { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.pick-name { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pick-folder { font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 缩略图模式：每行两张，正方形裁切。
+ * 用 padding-top:100%（按列宽算）撑出方格，网格行高拿到确定值后不会叠图；
+ * object-fit: cover 让横图竖图都铺满且不变形。 */
+.pick-list.grid {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px; padding: 8px; align-content: start;
+}
+.pick-list.grid .pick-item {
+  position: relative; display: block; padding: 100% 0 0;
+  border: 0; border-radius: 8px; overflow: hidden; background: var(--img-bg);
+}
+/* 图片绝对定位铺满整格，高度不再参与行高计算 */
+.pick-list.grid .pick-thumb {
+  position: absolute; inset: 0; width: auto; height: auto; border-radius: 0;
+}
+/* 整格被图片盖住，选中/悬停的描边画在图片上层 */
+.pick-list.grid .pick-item:hover::after {
+  content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  border-radius: 8px; box-shadow: inset 0 0 0 1px var(--text-dim);
+}
+.pick-list.grid .pick-item.on::after {
+  content: ''; position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  border-radius: 8px; box-shadow: inset 0 0 0 2px var(--accent);
+}
+.pick-list.grid .pick-meta { display: none; }
+.pick-list.grid .pick-item input[type="checkbox"] {
+  position: absolute; left: 6px; top: 6px; z-index: 3; margin: 0;
+  width: 15px; height: 15px; cursor: pointer;
+}
+.pick-list.grid .pick-empty { grid-column: 1 / -1; }
+
+.pick-empty { padding: 22px; text-align: center; color: var(--text-dim); font-size: 12.5px; }
+
+.pick-note {
+  margin: 0; padding: 8px 12px; border-top: 1px solid var(--border);
+  font-size: 11.5px; line-height: 1.55; color: var(--text-dim);
+}
+.pick-note.ok { color: var(--ok); }
+.pick-note.warn { color: var(--warn); }
+.pick-note.err { color: var(--danger); }
+
+.pick-foot {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 12px; border-top: 1px solid var(--border);
+}
+.pick-spacer { flex: 1 1 auto; }
+.pick-foot .btn { height: 28px; }
+
+/* 版权条（右下角最底部；自绘缩放按钮见左上角工具行，Leaflet 缩放控件已弃用） */
 .leaflet-control-attribution {
   background: rgba(0,0,0,.45) !important; color: #b9bec5 !important;
   font-size: 10px !important; padding: 2px 6px !important;
@@ -601,20 +863,6 @@ body.gated { overflow: hidden; }
   display: flex; gap: 8px; flex-wrap: wrap;
 }
 .lb-tools .lb-map { position: static; top: auto; left: auto; }
-
-/* ============ 无 GPS 文件夹行：外部工具入口 ============
- * 主操作（点击整行）是打开应用内编辑器；GPSStamp 是备用路径，
- * 平时压成一个小 ↗，悬停才显形，不抢主操作。 */
-.nogps-folder { position: relative; }
-.nogps-alt {
-  position: absolute; right: 6px; bottom: 6px;
-  width: 22px; height: 22px; padding: 0; border-radius: 6px;
-  border: 1px solid var(--border); background: var(--bg-elev);
-  color: var(--text-dim); font-size: 12px; line-height: 1; cursor: pointer;
-  opacity: 0; transition: opacity .15s;
-}
-.nogps-folder:hover .nogps-alt, .nogps-alt:focus-visible { opacity: 1; }
-.nogps-alt:hover { color: var(--accent); border-color: var(--accent); }
 
 /* ============ GPS 编辑器 ============ */
 body.modal-open { overflow: hidden; }
@@ -815,9 +1063,8 @@ body.modal-open { overflow: hidden; }
   text-align: center; font-size: 11.5px; color: var(--text-dim);
   opacity: .65; padding: 2px 0 6px;
 }
-.settings-foot { margin-top: 14px; margin-bottom: 0; }
-.settings-foot a { color: var(--accent); text-decoration: none; }
-.settings-foot a:hover { text-decoration: underline; }
+/* 设置页里的「程序版本」这类页脚小字 */
+.settings-card > .settings-hint:last-child { margin-bottom: 0; margin-top: 10px; }
 
 @media (max-width: 900px) {
   .help-wrap { grid-template-columns: minmax(0, 1fr); gap: 12px; }

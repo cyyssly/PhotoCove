@@ -23,8 +23,8 @@ contextBridge.exposeInMainWorld('__COVE_DESKTOP', {
   walk: (root) => ipcRenderer.invoke('cove:walk', root),
   stat: (p) => ipcRenderer.invoke('cove:stat', p),
   readHead: (p, bytes) => ipcRenderer.invoke('cove:readHead', p, bytes),
+  scanMeta: (p, bytes) => ipcRenderer.invoke('cove:scanMeta', p, bytes),
   readFile: (p) => ipcRenderer.invoke('cove:file', p),
-  launchGpsStamp: (folder) => ipcRenderer.invoke('cove:gpsstamp', folder, true),
   reveal: (p) => ipcRenderer.invoke('cove:reveal', p),
 
   /* GPS 编辑：写 EXIF 由主进程调 exiftool，页面碰不到 fs */

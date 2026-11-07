@@ -1,17 +1,20 @@
-/* js/gps-editor.js — 应用内 GPS 编辑（替代 GPSStamp 的主路径）
+/* js/gps-editor.js — 旧面板式 GPS 编辑器
  *
- * 存在的理由：GPSStamp 是浏览器沙箱时代的产物——网页版拿不到绝对路径、起不了进程，
- * 只能外挂一个独立工具去写 EXIF。桌面版这两条限制都没了，所以同样的动作
- * （挑照片 → 选位置 → 写 GPSPosition）应该留在应用里，不必在程序之间来回切。
+ * 历史角色：GPSStamp 是浏览器沙箱时代的产物——网页版拿不到绝对路径、起不了进程，
+ * 只能外挂一个独立工具去写 EXIF。桌面版这两条限制都没了，这个面板曾是应用内
+ * 的主路径（挑照片 → 选位置 → 写 GPSPosition）。
+ *
+ * 现状：补位置已整体搬到大地图上的工作台（map-pick.js），写入逻辑抽到 gps-write.js
+ * 共享。本模块暂无入口（面板与 init 保留），待确认稳定后可整体移除。
  *
  * 写入本身仍交给 exiftool（主进程调用），不自己解析 JPEG/HEIC 的 EXIF 二进制：
  * exiftool 会保留 MakerNotes、维持文件结构、支持所有相机格式，
  * 自己写偏移量出错就是毁照片。这里只负责「选哪些、写什么值、写完怎么更新索引」。
  *
  * 与 GPSStamp 的行为差异（都是刻意的）：
- * 1) 备份进 data\gps-backup\，不在照片文件夹里留 _original 副本——
+ * 1) 备份进程序根目录的 backup\，不在照片文件夹里留 _original 副本——
  *    否则下次扫描会把副本当成新照片索引进来，作品集里凭空多一倍。
- * 2) 地图选点与地名搜索在这里完成，不用记经纬度。
+ * 2) 地图选点与地名搜索在地图上完成，不用记经纬度。
  */
 'use strict';
 
@@ -44,12 +47,6 @@ const GPSEDIT = (() => {
       if (String(_dirs[i].id) === String(id)) return _dirs[i];
     }
     return null;
-  }
-
-  function absOf(p) {
-    const d = dirOf(p.dirId);
-    if (!d || !d.path) return '';
-    return PLATFORM.joinPath(d.path, p.relPath);
   }
 
   function folderLabel(p) {
@@ -230,6 +227,14 @@ const GPSEDIT = (() => {
   }
 
   /* ---------- 地名搜索 ---------- */
+  /* 来源提示（例如「百度不可用，已改用 OpenStreetMap」）：放在候选上方一行灰字 */
+  function noteRow(text) {
+    const d = document.createElement('div');
+    d.className = 'gps-result-hint';
+    d.textContent = text;
+    return d;
+  }
+
   async function doSearch() {
     const q = String($('#gps-q').value || '').trim();
     const box = $('#gps-results');
@@ -244,9 +249,11 @@ const GPSEDIT = (() => {
     }
     if (!r.results || !r.results.length) {
       box.innerHTML = '<div class="gps-result-hint">没找到这个地名。加上城市名（如「武汉 东湖」）通常更准。</div>';
+      if (r.note) box.insertBefore(noteRow(r.note), box.firstChild);
       return;
     }
     box.innerHTML = '';
+    if (r.note) box.appendChild(noteRow(r.note));
     r.results.forEach(it => {
       const b = document.createElement('button');
       b.type = 'button';
@@ -270,7 +277,9 @@ const GPSEDIT = (() => {
     });
   }
 
-  /* ---------- 写入 ---------- */
+  /* ---------- 写入 ----------
+   * 真正的写盘、索引更新、视图刷新都在 GPSWRITE 里（地图上的补位置工作台共用同一份），
+   * 这里只负责「读表单 → 确认 → 把结果写进日志」。 */
   async function doWrite() {
     if (_busy) return;
 
@@ -280,22 +289,14 @@ const GPSEDIT = (() => {
     const chosen = _photos.filter(p => _sel.has(p.id));
     if (!chosen.length) { log('左侧至少勾选一张照片。', 'warn'); return; }
 
-    const files = [];
-    const noPath = [];
-    for (const p of chosen) {
-      const a = absOf(p);
-      if (a) files.push(a); else noPath.push(p);
-    }
-    if (!files.length) { log('选中的照片都取不到本机路径，请到设置页检查目录记录。', 'warn'); return; }
-
     if (!_exiftool) { log('没有找到 exiftool.exe，无法写入。点「指定 exiftool」选一次即可。', 'warn'); return; }
 
     const backup = $('#gps-backup').checked;
     const ok = await APP.confirmDialog({
       title: '写入 GPS',
-      message: `把坐标 ${coord.lat.toFixed(6)}, ${coord.lng.toFixed(6)} 写入 ${files.length} 张照片的 EXIF？\n\n`
+      message: `把坐标 ${coord.lat.toFixed(6)}, ${coord.lng.toFixed(6)} 写入 ${chosen.length} 张照片的 EXIF？\n\n`
         + (backup
-          ? '原图会先备份到程序目录的 data\\gps-backup\\，出问题可以还原。'
+          ? '原图会先备份到程序根目录的 backup\\，出问题可以还原。'
           : '当前未开启备份，原文件将被直接改写。'),
       okText: '写入',
       danger: false,
@@ -305,15 +306,20 @@ const GPSEDIT = (() => {
     _busy = true;
     setBusy(true);
     clearLog();
-    log(`准备写入 ${files.length} 张…`);
+    log(`准备写入 ${chosen.length} 张…`);
+
+    const off = PLATFORM.onGpsProgress(d => {
+      const btn = $('#gps-write');
+      if (btn) btn.textContent = `写入中 ${d.done}/${d.total}`;
+    });
 
     let r;
     try {
-      r = await PLATFORM.writeGps({
-        files, lat: coord.lat, lng: coord.lng, backup, exiftool: _exiftool,
-      });
+      r = await GPSWRITE.write(chosen, coord, { backup, exiftool: _exiftool });
     } catch (e) {
       r = { ok: false, error: e && e.message ? e.message : String(e) };
+    } finally {
+      if (off) off();
     }
 
     if (!r || r.ok === false) {
@@ -326,19 +332,7 @@ const GPSEDIT = (() => {
     log(`完成：成功 ${r.updated} 张，失败 ${r.failed} 张。`, r.failed ? 'warn' : 'ok');
     if (r.backupFailed) log(`有 ${r.backupFailed} 张备份失败（可能是磁盘写入权限），但已照常写入。`, 'warn');
     (r.errors || []).forEach(e => log(e, 'err'));
-
-    // 索引里的坐标要跟着改，否则地图上还是看不到这些照片
-    const wrote = chosen.filter(p => files.includes(absOf(p)));
-    for (const p of wrote) {
-      p.gps = { lat: coord.lat, lng: coord.lng };
-      try { await DB.putPhoto(p); } catch (e) { /* 单条失败不影响其它 */ }
-    }
-    if (noPath.length) log(`有 ${noPath.length} 张记不到路径，已跳过。`, 'warn');
-
-    try { await VIEWS.reload(); } catch (e) { /* ignore */ }
-    if (typeof MAPVIEW !== 'undefined' && MAPVIEW) {
-      try { MAPVIEW.render(); } catch (e) { /* 不在地图视图时无所谓 */ }
-    }
+    if (r.noPath && r.noPath.length) log(`有 ${r.noPath.length} 张记不到路径，已跳过。`, 'warn');
 
     APP.toast(`已写入 ${r.updated} 张照片的位置信息`);
     _busy = false;

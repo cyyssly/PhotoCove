@@ -40,6 +40,54 @@
   <select id="filter-camera" class="filter-select"><option value="">全部器材</option></select>
   <select id="filter-album" class="filter-select"><option value="">全部相册</option></select>
   <span id="filter-count" class="filter-count"></span>
+  <!-- 右上角排序：作品集 8 种（参考 FrameFlow），相册集只留 顺序 / 逆序 / 随机 -->
+  <div id="sort-control" class="sort-control hidden">
+    <button id="sort-btn" class="sort-btn" type="button" title="排序方式" aria-haspopup="menu" aria-expanded="false">
+      <span id="sort-current" class="sort-current" aria-hidden="true"></span>
+    </button>
+    <div id="sort-menu" class="sort-menu hidden" role="menu" aria-label="排序方式">
+      <button class="sort-item" type="button" role="menuitemradio" data-sort="nameAsc" aria-checked="false">
+        <span class="sort-item-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="currentColor"><text x="8" y="6.8" text-anchor="middle" font-size="6.5" font-weight="700" font-family="Arial, sans-serif">A</text><text x="8" y="14.6" text-anchor="middle" font-size="6.5" font-weight="700" font-family="Arial, sans-serif">Z</text></svg></span>
+        <span class="sort-item-label">顺序</span>
+        <span class="sort-check">✓</span>
+      </button>
+      <button class="sort-item" type="button" role="menuitemradio" data-sort="nameDesc" aria-checked="false">
+        <span class="sort-item-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="currentColor"><text x="8" y="6.8" text-anchor="middle" font-size="6.5" font-weight="700" font-family="Arial, sans-serif">Z</text><text x="8" y="14.6" text-anchor="middle" font-size="6.5" font-weight="700" font-family="Arial, sans-serif">A</text></svg></span>
+        <span class="sort-item-label">逆序</span>
+        <span class="sort-check">✓</span>
+      </button>
+      <button class="sort-item" type="button" role="menuitemradio" data-sort="timeNewest" aria-checked="false">
+        <span class="sort-item-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4.5"/><path d="M8 5.6V8l1.9 1.3"/><path d="M12.2 1.6l1.6 2.2-2.5.5"/></svg></span>
+        <span class="sort-item-label">最新</span>
+        <span class="sort-check">✓</span>
+      </button>
+      <button class="sort-item" type="button" role="menuitemradio" data-sort="timeOldest" aria-checked="false">
+        <span class="sort-item-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="4.5"/><path d="M8 5.6V8l1.9 1.3"/><path d="M3.8 1.6 2.2 3.8l2.5.5"/></svg></span>
+        <span class="sort-item-label">最旧</span>
+        <span class="sort-check">✓</span>
+      </button>
+      <button class="sort-item" type="button" role="menuitemradio" data-sort="sizeLargest" aria-checked="false">
+        <span class="sort-item-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3.2v9.2"/><path d="M4.6 8.8 8 12.2l3.4-3.4"/></svg></span>
+        <span class="sort-item-label">最大</span>
+        <span class="sort-check">✓</span>
+      </button>
+      <button class="sort-item" type="button" role="menuitemradio" data-sort="sizeSmallest" aria-checked="false">
+        <span class="sort-item-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 12.8V3.6"/><path d="M4.6 7.2 8 3.8l3.4 3.4"/></svg></span>
+        <span class="sort-item-label">最小</span>
+        <span class="sort-check">✓</span>
+      </button>
+      <button class="sort-item" type="button" role="menuitemradio" data-sort="random" aria-checked="false">
+        <span class="sort-item-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2.8 4.2h2.4l6 7.6h2"/><path d="M2.8 11.8h2.4l6-7.6h2"/><path d="M11.6 2.4 14 4.2l-2.4 1.8"/><path d="M11.6 10 14 11.8l-2.4 1.8"/></svg></span>
+        <span class="sort-item-label">随机</span>
+        <span class="sort-check">✓</span>
+      </button>
+      <button class="sort-item" type="button" role="menuitemradio" data-sort="newPreferred" aria-checked="false">
+        <span class="sort-item-icon" aria-hidden="true"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="5" width="13" height="6.6" rx="1.6"/><text x="8" y="10" text-anchor="middle" font-size="4" font-weight="700" font-family="Arial, sans-serif" fill="currentColor" stroke="none">NEW</text></svg></span>
+        <span class="sort-item-label">新图优先</span>
+        <span class="sort-check">✓</span>
+      </button>
+    </div>
+  </div>
 </div>
 
 <main id="main">
@@ -48,7 +96,7 @@
     <div id="portfolio-grid" class="masonry"></div>
     <div id="portfolio-empty" class="empty-state hidden">
       <p>还没有照片。</p>
-      <p>到 <a href="#" data-goto="settings">设置</a> 里添加图片库目录，然后点该目录的「扫描」。</p>
+      <p>到 <a href="#" data-goto="settings">设置</a> 里点「＋ 添加目录」，选定照片文件夹后会自动扫描。</p>
     </div>
   </section>
 
@@ -71,21 +119,82 @@
   <!-- 地图：点亮有 GPS 的照片 -->
   <section id="view-map" class="view hidden">
     <div id="map" class="map-container"></div>
+
+    <!-- 地名搜索 + 缩放按钮（左上角同一行）：搜到地方 → 在地图上落标记 → 右下角坐标条显示当前选点。
+         缩放不用 Leaflet 自带控件（只会竖排钉在四角），自绘两个按钮横向排在搜索框右边。
+         搜索结果向下拉列表展开。 -->
+    <div id="map-search" class="map-search">
+      <div class="map-search-row">
+        <div class="map-search-box">
+          <input id="map-q" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="搜地名，例如：广州塔 / 武汉东湖" aria-label="搜索地名">
+          <button id="map-q-btn" class="map-search-btn" type="button" title="搜索（Enter）">搜索</button>
+        </div>
+        <div class="map-zoom" role="group" aria-label="地图缩放">
+          <button id="map-zoom-in" class="map-zoom-btn" type="button" title="放大">＋</button>
+          <button id="map-zoom-out" class="map-zoom-btn" type="button" title="缩小">－</button>
+        </div>
+      </div>
+      <div id="map-results" class="map-results hidden" role="listbox" aria-label="地名搜索结果"></div>
+    </div>
+
+    <!-- 当前选点（右下角，版权条上方）：没有选点时整条隐藏 -->
+    <div id="map-pick-bar" class="map-pick-bar hidden">
+      <span class="map-pick-title">当前坐标：</span>
+      <span id="map-pick-coord" class="map-pick-coord">—</span>
+      <button id="map-pick-clear" class="map-pick-clear" type="button" title="清除选点（Esc）">清除</button>
+    </div>
+
     <div id="map-stats" class="map-stats hidden"></div>
-    <!-- 无 GPS 照片入口：点开面板仍可浏览这些照片，避免"照片凭空少了"的错觉 -->
-    <button id="map-nogps" class="map-nogps hidden" type="button">0 张照片无位置信息</button>
+    <!-- 无 GPS 照片入口：右上角一行胶囊，点击后原地向下展开成文件夹列表
+         （胶囊让位、不与面板并存），面板右上角的 ▴ 收起后恢复这一行 -->
+    <button id="map-nogps" class="map-nogps hidden" type="button" aria-expanded="false" title="展开无位置照片列表">0 张照片无位置信息</button>
     <aside id="map-nogps-panel" class="map-nogps-panel hidden">
       <div class="map-nogps-head">
         <span id="map-nogps-title">无位置信息</span>
-        <button id="map-nogps-close" class="map-nogps-close" type="button" title="关闭">×</button>
+        <button id="map-nogps-close" class="map-nogps-close" type="button" title="收起（恢复为一行）" aria-label="收起">▴</button>
       </div>
       <div id="map-nogps-list" class="map-nogps-list"></div>
-      <p class="map-nogps-note">按文件夹聚合。点一下文件夹就在应用内打开编辑器：只载入其中没有 GPS 的照片，在图上点一下或搜地名，一次写入全部。行尾的 <b>↗</b> 是备用入口，用本机的 <b>GPSStamp</b> 打开。EXIF 里没有 GPS 的多见于老相机、截图或转发下载的图片，照片本身不受影响。</p>
+      <p class="map-nogps-note">点击文件夹可预览并选中图片，点击写入按钮可将右下角显示的GPS坐标写入选中的图片</p>
+    </aside>
+
+    <!-- 补位置工作台（右栏）：勾选照片 → 地图选点 → 写入。
+         与上面的「无位置信息」面板占同一块位置，同一时间只会出现一个。 -->
+    <aside id="map-pick-panel" class="pick-panel hidden" aria-label="待补位置的照片">
+      <div class="pick-head">
+        <span id="map-pick-title" class="pick-title">待标记</span>
+        <span id="map-pick-count" class="pick-count">0 / 0</span>
+        <button id="map-pick-close" class="pick-x" type="button" title="退出补位置（Esc）">×</button>
+      </div>
+      <div class="pick-tools">
+        <label class="pick-check"><input type="checkbox" id="map-pick-all"> 全选</label>
+        <span class="pick-tip">勾选要写入GPS信息的照片</span>
+        <!-- 工具行右侧三个图标按钮：返回 → 列表 / 缩略图 -->
+        <div class="pick-views">
+          <button id="map-pick-back" class="pick-icon hidden" type="button" title="返回无位置照片列表" aria-label="返回无位置照片列表">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <button id="map-pick-list-view" class="pick-icon on" type="button" data-view="list" title="列表显示" aria-label="列表显示" aria-pressed="true">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M3 8h10M3 12h10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+          </button>
+          <button id="map-pick-grid-view" class="pick-icon" type="button" data-view="grid" title="缩略图显示" aria-label="缩略图显示" aria-pressed="false">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="4" height="4" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="9" y="3" width="4" height="4" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="3" y="9" width="4" height="4" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="9" y="9" width="4" height="4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+          </button>
+        </div>
+      </div>
+      <div id="map-pick-list" class="pick-list"></div>
+      <p id="map-pick-note" class="pick-note hidden"></p>
+      <div class="pick-foot">
+        <label class="pick-check"><input type="checkbox" id="map-pick-backup" checked> 备份原图</label>
+        <span class="pick-spacer"></span>
+        <button id="map-pick-exe" class="btn btn-small btn-ghost hidden" type="button">指定 exiftool</button>
+        <button id="map-pick-write" class="btn btn-small" type="button" disabled>写入</button>
+      </div>
     </aside>
     <div id="map-empty" class="empty-state hidden">
       <div class="map-empty-card">
         <p>当前筛选条件下没有带位置信息的照片。</p>
-        <p>老相机、网络下载或未开启定位的照片通常不含 GPS；左下角可查看这些照片。</p>
+        <p>老相机、网络下载或未开启定位的照片通常不含 GPS；右上角「N 张照片无位置信息」可查看这些照片。</p>
       </div>
     </div>
   </section>
@@ -93,29 +202,32 @@
   <!-- 设置 -->
   <section id="view-settings" class="view hidden">
     <div class="settings-wrap">
-      <!-- 图片库 -->
+      <!-- 图片库：目录管理 + RAW 开关 -->
       <div class="settings-card">
-        <h3>图片库目录</h3>
-        <p class="settings-hint">支持添加多个目录，原图保留在原位置。子文件夹会自动识别为相册。</p>
-
-        <!-- 目录可读性常驻显示：外接盘拔掉了、文件夹被改名挪走，都会在这里暴露 -->
-        <div id="dir-perm-bar" class="dir-perm-bar">
-          <span id="dir-perm-text" class="dir-perm-text">正在检查目录…</span>
-          <button id="perm-recheck" class="btn btn-small btn-ghost">重新检查</button>
-        </div>
+        <h3>图片库</h3>
+        <p class="settings-hint">支持添加多个目录，添加或移除索引都不影响原图，子文件夹自动识别为相册。</p>
 
         <ul id="dir-list" class="dir-list"></ul>
-        <button id="add-dir" class="btn">＋ 添加图片库目录</button>
-      </div>
 
-      <!-- RAW -->
-      <div class="settings-card">
-        <h3>RAW 支持</h3>
+        <div class="dir-footer">
+          <button id="add-dir" class="btn">＋ 添加目录</button>
+          <button id="rescan-raw" class="btn hidden">重建 RAW 索引</button>
+          <button id="clear-db" class="btn btn-danger">清空索引</button>
+        </div>
+
         <div class="settings-row">
-          <span>启用 RAW 预览提取<span class="settings-sub">开启后新扫描的 RAW 文件会提取内嵌 JPEG 预览；已扫描过的 RAW 需点击下方重建</span></span>
+          <span>启用 RAW 预览提取<span class="settings-sub">开启后新扫描的 RAW 文件会提取内嵌 JPEG 预览；已扫描过的 RAW 需点上方「重建 RAW 索引」</span></span>
           <label class="switch"><input type="checkbox" id="raw-toggle"><span class="slider"></span></label>
         </div>
-        <button id="rescan-raw" class="btn btn-small hidden">重建 RAW 索引</button>
+
+        <div class="settings-row">
+          <span>相册识别<span class="settings-sub">选择独立相册的细分粒度：以「下一级」为例，则该级子文件夹内所有照片都归入同一相册，包括在它下面的其他子文件夹内的照片；其他类推，最多支持下三级</span></span>
+          <div class="seg-group" id="album-gran-group">
+            <button class="seg-btn" data-gran="1">下一级</button>
+            <button class="seg-btn" data-gran="2">下两级</button>
+            <button class="seg-btn" data-gran="3">下三级</button>
+          </div>
+        </div>
       </div>
 
       <!-- 外观 -->
@@ -124,7 +236,7 @@
         <div class="settings-row">
           <span>主题</span>
           <div class="seg-group" id="theme-group">
-            <button class="seg-btn" data-theme="dark">暗色（默认）</button>
+            <button class="seg-btn" data-theme="dark">暗色</button>
             <button class="seg-btn" data-theme="light">亮色</button>
           </div>
         </div>
@@ -134,21 +246,11 @@
       <div class="settings-card">
         <h3>维护</h3>
         <div class="settings-row">
-          <span>立即全量检查更新<span class="settings-sub">打开页面不会自动扫描；需要更新时点各目录的「扫描」，或在这里全量检查</span></span>
-          <button id="rescan-all" class="btn btn-small">重新扫描</button>
-        </div>
-        <div class="settings-row">
-          <span>清空本地索引<span class="settings-sub">删除所有缩略图和记录，不影响原图</span></span>
-          <button id="clear-db" class="btn btn-small btn-danger">清空</button>
-        </div>
-        <div class="settings-row">
           <span>存储状态<span class="settings-sub">本站缓存的缩略图与预览图占用的空间，原图不计入</span></span>
           <div id="storage-info" class="diag-info">检查中…</div>
         </div>
-        <p class="settings-hint">程序版本 v20。</p>
+        <p class="settings-hint">程序版本 v22。</p>
       </div>
-
-      <p class="settings-hint settings-foot">完整的操作说明、快捷键与常见问题见 <a href="#" data-goto="help">帮助</a>。</p>
     </div>
   </section>
 
@@ -164,7 +266,7 @@
         <a href="#help-format">格式支持</a>
         <a href="#help-limits">已知限制</a>
         <a href="#help-faq">常见问题</a>
-        <div class="help-toc-foot">程序版本 v20</div>
+        <div class="help-toc-foot">程序版本 v22</div>
       </aside>
 
       <div class="help-body">
@@ -172,11 +274,11 @@
           <h2>快速上手</h2>
           <p>PhotoCove 是本地照片浏览工具：直接读你指定的文件夹，不搬动、不改写任何照片；索引与缩略图存在程序目录的 <b>data\</b> 里。</p>
           <ol class="help-steps">
-            <li>到 <a href="#" data-goto="settings">设置</a> 点「＋ 添加图片库目录」，选一个照片文件夹。可以添加多个，子文件夹会自动识别为相册。</li>
-            <li>点该目录右侧的「扫描」。首次会为每张照片读一段文件头（不解码像素），两万张的量级以分钟计。</li>
+            <li>到 <a href="#" data-goto="settings">设置</a> 点「＋ 添加目录」，选一个照片文件夹。可以添加多个，子文件夹会自动识别为相册。</li>
+            <li>选完立刻开始扫描。首次会为每个文件读一小段文件头（不解码像素），几万张通常半分钟以内。</li>
             <li>回到 <a href="#" data-goto="portfolio">作品集</a> 浏览。之后每次打开都直接显示上次的结果，<b>不会自动扫描</b>。</li>
           </ol>
-          <p class="help-note">扫描期间右下角有进度浮卡，可随时取消，已扫的部分照常入库。要更新时点对应目录的「扫描」，或在「设置 → 维护」里全量重新扫描。</p>
+          <p class="help-note">扫描期间右下角有进度浮卡，可随时取消，已扫的部分照常入库。之后新增或改动过照片，点对应目录的「重新扫描」即可增量更新。</p>
         </section>
 
         <section id="help-browse" class="help-card">
@@ -184,9 +286,9 @@
           <table class="help-table">
             <thead><tr><th>视图</th><th>说明</th></tr></thead>
             <tbody>
-              <tr><td>作品集</td><td>瀑布流，可按年份 / 器材 / 相册筛选</td></tr>
+              <tr><td>作品集</td><td>瀑布流，可按年份 / 器材 / 相册筛选；右上角排序按钮可切换 顺序 / 逆序 / 最新 / 最旧 / 最大 / 最小 / 随机 / 新图优先 8 种方式；最新 / 最旧按拍摄日期为准，没有拍摄日期的照片排在最后</td></tr>
               <tr><td>时间轴</td><td>按拍摄日期分组，拍摄时间取自 EXIF</td></tr>
-              <tr><td>相册集</td><td>子文件夹自动识别为相册</td></tr>
+              <tr><td>相册集</td><td>子文件夹自动识别为相册；右上角排序按钮可切 顺序 / 逆序 / 随机 3 种方式</td></tr>
               <tr><td>地图</td><td>带 GPS 的照片点亮在地图上，密集处聚合为数字气泡</td></tr>
               <tr><td>设置</td><td>目录管理、RAW 开关、主题、维护与存储状态</td></tr>
               <tr><td>帮助</td><td>就是你现在看的这一页：操作说明、快捷键与常见问题</td></tr>
@@ -198,7 +300,7 @@
             <li><span class="keys"><kbd>←</kbd><kbd>→</kbd><kbd>滚轮</kbd></span><span>上一张 / 下一张</span></li>
             <li><span class="keys"><kbd>Esc</kbd></span><span>关闭大图</span></li>
             <li><span class="keys"><kbd>单击图片</kbd></span><span>进入全屏</span></li>
-            <li><span class="keys"><kbd>G</kbd></span><span>给这一张标记 GPS 位置</span></li>
+            <li><span class="keys"><kbd>G</kbd></span><span>到地图上给这一张补位置</span></li>
             <li><span class="keys"><kbd>R</kbd></span><span>在资源管理器中显示，并直接选中该文件</span></li>
           </ul>
           <p class="help-note">大图底部的缩略图条可以直接点选跳转。</p>
@@ -216,23 +318,25 @@
           <h2>地图与补 GPS</h2>
           <p>底图用免 API Key 的 OpenStreetMap 瓦片，随程序本地存放，多源自动降级（osm.de → osm.org → OpenTopoMap）。三者都是 Web 墨卡托 / WGS-84，与照片经纬度一致、无偏移。瓦片请求只发送瓦片坐标，不上传照片、文件名或经纬度。地名搜索与瓦片需要联网，其余功能离线可用。</p>
 
-          <h3>批量补坐标</h3>
+          <h3>在地图上找位置</h3>
+          <p>地图页左上角可以直接搜地名：回车或点「搜索」，候选里用 <b>↑ ↓</b> 选择、回车定位；搜索框右边就是放大 / 缩小按钮。也可以直接在地图上点一下落下标记，标记可拖动微调；右下角显示当前坐标，点「清除」或按 <b>Esc</b> 收起。右下角这条坐标也是<b>补位置工作台</b>的取点处：查坐标时点一下地图就有；打开右侧待处理列表后，同一个选点直接用于批量写入（见下一节）。</p>
+
+          <h3>给照片补坐标</h3>
           <ol class="help-steps">
-            <li>地图页左下角点「N 张照片无位置信息」，面板按文件夹聚合（一次最多列 200 张，避免节点过多卡顿）。</li>
-            <li>点一个文件夹，应用内打开编辑器，<b>只载入该文件夹里缺 GPS 的照片</b>，已有坐标的不会被覆盖。</li>
-            <li>在图上点一下取坐标（标记可拖动微调），或输入地名搜索。搜索走 OpenStreetMap 的 Nominatim，返回 WGS-84，与照片和底图同一坐标系，<b>不需要 GCJ-02 / BD-09 纠偏</b>。</li>
-            <li>左侧全选或单选，点「写入」。写完成片会立即刷新网格、地图与索引。</li>
+            <li>地图页右上角点「N 张照片无位置信息」，这一行就在原地向下展开成相册列表（按相册聚合，细分粒度与设置页的「相册识别」一致，相册按名字顺序排列，不提供自定义排序），面板右上角的 <b>▴</b> 收起后恢复成一行。点一个相册，右侧就出现待处理列表（按文件名顺序排列），<b>只载入该相册里缺 GPS 的照片</b>，已有坐标的不会被覆盖；列表工具行最右端是三个图标按钮：<b>返回</b>箭头退回相册列表接着挑下一个，<b>列表</b> / <b>缩略图</b> 切换右栏显示样式（缩略图每行两张、正方形裁切，横图竖图都不变形）。</li>
+            <li>地图会先落到同相册里已有 GPS 照片的大致位置，省得从全国视图开始找；同相册一张带位置的照片都没有时，就从当前视野开始。</li>
+            <li>在图上点一下取坐标（标记可拖动微调），或搜地名定位。搜索走 OpenStreetMap 的 Nominatim，返回 WGS-84，与照片和底图同一坐标系，<b>不需要 GCJ-02 / BD-09 纠偏</b>。</li>
+            <li>右栏全选或单选，点「写入 N 张」。写完后这些照片立刻变成地图上的实心点，并从待处理列表里消失。</li>
+            <li>按 <b>Esc</b> 或右栏右上角的 <b>×</b> 退出补位置；「清除」只清坐标、保留列表，适合同一个相册换个位置再写一批。</li>
           </ol>
 
           <h3>关于写入</h3>
           <ul>
             <li><b>这是程序唯一会改动照片的操作</b>。写入的是 EXIF 里的 GPS 坐标，其余字段不动。</li>
-            <li>写入前自动把原图备份到 <b>data\gps-backup\</b>（镜像原路径），出问题可以还原。这里故意不用 exiftool 的 <code>_original</code> 同目录备份：那会在你的照片文件夹里多出 <code>xxx_original.jpg</code>，下次扫描被当成新照片索引进来。</li>
-            <li>写入由 exiftool 完成。没装时编辑器会提示，点「指定 exiftool」选一次即可，之后记住。</li>
+            <li>写入过的坐标会<b>另外记一份</b>：重新扫描、甚至「清空索引」后重建索引，这些照片仍会回到地图上的原位，不用重新补一次。RAW 尤其需要这道保险——exiftool 给 RAW 写坐标时把它追加到文件尾部，扫描读文件头是看不到的。</li>
+            <li>写入前自动把原图备份到程序根目录的 <b>backup\</b>（开发版即 <code>E:\www\JS\PhotoCove\backup\</code>，按原路径镜像），出问题可以还原。这里故意不用 exiftool 的 <code>_original</code> 同目录备份：那会在你的照片文件夹里多出 <code>xxx_original.jpg</code>，下次扫描被当成新照片索引进来。</li>
+            <li>写入由 exiftool 完成。没装时右栏底部会提示，点「指定 exiftool」选一次即可，之后记住。</li>
           </ul>
-
-          <h3>GPSStamp 备用入口</h3>
-          <p>文件夹行尾的 <b>↗</b> 会用同目录下的 <b>GPSStamp</b> 打开该文件夹（只载入缺 GPS 的照片）。对 RAW / HEIC 更稳，也可以单独使用，详见 <code>GPSStamp\使用说明.txt</code>。</p>
         </section>
 
         <section id="help-data" class="help-card">
@@ -243,12 +347,12 @@
             <tbody>
               <tr><td>项目文件夹改名、挪到别的盘</td><td>保留</td><td>不受影响</td></tr>
               <tr><td>整个文件夹拷到另一台电脑</td><td>跟着走，不必重扫</td><td>不受影响</td></tr>
-              <tr><td>「清空本地索引」</td><td>全部删除，点「扫描」重建</td><td>不受影响</td></tr>
+              <tr><td>「清空索引」</td><td>全部删除，点「重新扫描」重建；补写的 GPS 坐标保留并自动回填</td><td>不受影响</td></tr>
             </tbody>
           </table>
           <ul>
-            <li>只有程序目录不可写时（例如放进 <code>Program Files</code>），才会退回系统的 <code>%APPDATA%\PhotoCove</code>；「设置 → 维护 → 存储状态」里会显示实际位置。</li>
-            <li>目录行显示<b>「不可用」</b>通常只是外接盘没插、或文件夹被改名挪走了。插回盘后点「重新检查」即可，不必重新添加。</li>
+            <li>只有程序目录不可写时（例如放进 <code>Program Files</code>），才会退回系统的 <code>%APPDATA%\PhotoCove</code>。</li>
+            <li>目录行显示<b>「不可用」</b>通常只是外接盘没插、或文件夹被改名挪走了。插回盘后点该目录的「重新扫描」即可，不必重新添加。</li>
           </ul>
         </section>
 
@@ -256,7 +360,7 @@
           <h2>格式支持</h2>
           <ul>
             <li><b>常见格式</b>：JPEG / PNG / WebP / GIF / TIFF，直接解码显示。</li>
-            <li><b>RAW</b>（CR2 / CR3 / ARW / NEF / ORF / DNG 等）：默认关闭，需到设置里开启。开启后通过提取相机内嵌的 JPEG 预览图展示，<b>不解码原始传感器数据</b>；开启之前已扫描过的 RAW 需点「重建 RAW 索引」。</li>
+            <li><b>RAW</b>（CR2 / CR3 / ARW / NEF / ORF / DNG 等）：默认关闭，需到设置里开启。开启后通过提取相机内嵌的 JPEG 预览图展示，<b>不解码原始传感器数据</b>；开启之前已扫描过的 RAW 需点「重建 RAW 索引」。RAW 文件头里的 EXIF（机型、拍摄时间、光圈、ISO、GPS）同样会读取，供时间轴、器材筛选和地图点位使用；旧索引里的 RAW 缺这些字段，点一次「重新扫描」即可补齐（只需多读这一次）。部分老机型（如 RW2）本身不写标准 EXIF，读不到属正常。</li>
             <li><b>HEIC / HEIF</b>：暂不支持。Chromium 内核不解这个格式，要另接 libheif。</li>
           </ul>
         </section>
@@ -265,8 +369,8 @@
           <h2>已知限制</h2>
           <ul>
             <li><b>没有代码签名</b>：exe 首次运行时 Windows SmartScreen 会拦一次，点「更多信息 → 仍要运行」即可，同一台机器放行一次后不再提示。用 U 盘或局域网拷贝过来的文件不带网络标记，通常连提示都没有。</li>
-            <li><b>不自动监视文件夹</b>：新加的照片需要手动「扫描」才进索引，之后走增量（比对修改时间 + 文件大小），只读变化的文件。</li>
-            <li><b>首次扫描较慢</b>：每张照片都要读一段文件头，两万张以分钟计；这是唯一一次性的开销。</li>
+            <li><b>不自动监视文件夹</b>：新加的照片需要手动「重新扫描」才进索引，之后走增量（比对修改时间 + 文件大小），只读变化的文件。</li>
+            <li><b>首次扫描较慢</b>：每个文件都要读一小段文件头（不解码像素），几万张通常半分钟以内；这是唯一一次性的开销，之后只比对修改时间与大小。</li>
             <li><b>地图页最多列 200 张无位置照片</b>：套图或截图特别多时分批处理，补完再点一次即可。</li>
           </ul>
         </section>
@@ -275,11 +379,11 @@
           <h2>常见问题</h2>
           <details class="help-faq">
             <summary>打开后一张照片都没有？</summary>
-            <p>程序不会自动扫描。先确认筛选栏没把照片筛掉（年份 / 器材 / 相册都选「全部」），再到设置里给目录点一次「扫描」。若是新换的电脑，索引不会跟着照片走，需要重扫一次——除非你把 <b>data\</b> 一起拷过来了。</p>
+            <p>程序不会自动扫描。先确认筛选栏没把照片筛掉（年份 / 器材 / 相册都选「全部」），再到设置里给该目录点一次「重新扫描」。若是新换的电脑，索引不会跟着照片走，需要重扫一次——除非你把 <b>data\</b> 一起拷过来了。</p>
           </details>
           <details class="help-faq">
             <summary>缩略图一直是灰块或转圈？</summary>
-            <p>单张解码有 20 秒上限，超时会显示「加载超时 · 点击重试」。整片空白时，先看设置页目录徽章是不是「不可用」（盘没插、文件夹被改名），插回盘后点「重新检查」会自动恢复。</p>
+            <p>单张解码有 20 秒上限，超时会显示「加载超时 · 点击重试」。整片空白时，先看设置页目录徽章是不是「不可用」（盘没插、文件夹被改名），插回盘后点该目录的「重新扫描」会自动恢复。</p>
           </details>
           <details class="help-faq">
             <summary>索引到的照片比文件夹里少？</summary>
@@ -287,11 +391,11 @@
           </details>
           <details class="help-faq">
             <summary>换电脑要做什么？</summary>
-            <p>整个程序目录（含 <b>data\</b>）拷过去，照片留在原来的盘位即可，不用重扫。若照片路径变了，把旧的目录记录移除、重新添加扫描一次。</p>
+            <p>整个程序目录（含 <b>data\</b>）拷过去，照片留在原来的盘位即可，不用重扫。若照片路径变了，把旧的目录记录移除、重新添加一次。</p>
           </details>
           <details class="help-faq">
             <summary>补 GPS 会改动我的原图吗？</summary>
-            <p>会，但只改 EXIF 里的 GPS 坐标，并且写入前先备份到 <b>data\gps-backup\</b>。除此之外的所有操作都是只读的：扫描、生成缩略图、浏览都不会修改照片文件。</p>
+            <p>会，但只改 EXIF 里的 GPS 坐标，并且写入前先备份到程序根目录的 <b>backup\</b>。除此之外的所有操作都是只读的：扫描、生成缩略图、浏览都不会修改照片文件。</p>
           </details>
           <details class="help-faq">
             <summary>能在浏览器里打开吗？</summary>
@@ -299,7 +403,7 @@
           </details>
         </section>
 
-        <p class="help-sign">PhotoCove v20 · 本地运行，照片不上传</p>
+        <p class="help-sign">PhotoCove v22 · 本地运行，照片不上传</p>
       </div>
     </div>
   </section>
@@ -338,7 +442,7 @@
   <div class="lb-strip" id="lb-strip"></div>
 </div>
 
-<!-- GPS 编辑器：左侧挑照片，右侧选点 -->
+<!-- 旧面板式 GPS 编辑器（已被大地图工作台取代，暂无入口，面板保留待清理） -->
 <div id="gps-overlay" class="gps-overlay hidden">
   <div class="gps-panel" role="dialog" aria-modal="true" aria-labelledby="gps-title">
     <div class="gps-head">
@@ -381,7 +485,7 @@
         <p class="gps-hint">在图上点一下即可取坐标，标记可拖动微调。</p>
 
         <div class="gps-foot">
-          <label class="gps-check"><input type="checkbox" id="gps-backup" checked> 备份原图到 data\gps-backup</label>
+          <label class="gps-check"><input type="checkbox" id="gps-backup" checked> 备份原图到 backup\</label>
           <button id="gps-pick-exe" class="btn btn-small btn-ghost hidden" type="button">指定 exiftool</button>
           <button id="gps-write" class="btn" type="button">写入</button>
         </div>
@@ -415,6 +519,8 @@
 <script src="assets/vendor/leaflet/leaflet.js"></script>
 <script src="assets/vendor/leaflet/leaflet.markercluster.js"></script>
 <script src="js/map-view.js"></script>
+<script src="js/gps-write.js"></script>
+<script src="js/map-pick.js"></script>
 <script src="js/gps-editor.js"></script>
 <script src="js/app.js"></script>
 
@@ -426,7 +532,7 @@
     <h1>请从桌面窗口启动</h1>
     <p>PhotoCove 现在只以桌面应用的形式运行，需要直接读写磁盘上的照片目录。</p>
     <p><b>双击程序目录里的「启动 PhotoCove.bat」即可。</b></p>
-    <p class="gate-note">直接在浏览器里打开 index.html 是打不开的：浏览器拿不到文件的绝对路径，也无法启动本机的 GPSStamp。</p>
+    <p class="gate-note">直接在浏览器里打开 index.html 是打不开的：浏览器拿不到文件的绝对路径，也读不了你本机的照片文件夹。</p>
   </div>
 </div>
 <script>

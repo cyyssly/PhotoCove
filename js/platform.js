@@ -10,10 +10,10 @@
  *
  * 两处刻意的取舍，都不是随手写的：
  *
- * 1) 扫描阶段只读文件开头 512KB（readHead），不整文件读。
- *    exifr 是按需切片读的，256KB 足够覆盖 JPEG 的 APP1（规范上限 64KB）
- *    与绝大多数 HEIC/TIFF 的 IFD0。整文件读的话，两万张照片的首轮扫描
- *    要搬上百 GB 数据过 IPC，直接不可用。
+ * 1) 扫描阶段只读文件开头 96KB（scanMeta），不整文件读，而且在主进程就地解析，
+ *    页面只拿到尺寸/EXIF 这几百字节。两万张照片从「搬 10GB 字节过 IPC」降到
+ *    「搬两万个几百字节的对象」，这是扫描提速的主要来源。整文件读更不可行：
+ *    同样两万张要搬上百 GB。
  * 2) 真正要解码显示时才读整文件（openFile），而原图大图直接用 covefile://
  *    交给 Chromium 自己流式加载（imageUrl），不进 JS 堆。
  *
@@ -33,7 +33,11 @@ const PLATFORM = (() => {
     return new Proxy({}, { get: () => fail });
   }
 
-  const HEAD_BYTES = 512 * 1024;
+  /* 扫描只读文件开头 96KB（scanMeta），不整文件读。
+   * 为什么是 96KB 而不是更小：JPEG 的 APP1(EXIF) 段上限 65535 字节，加长度域结束于
+   * 65538，取 64KB 正好切掉最后两字节，满段 EXIF 就解不出来。96KB 留了余量，
+   * 主进程那边还有一次 512KB 的补读兜底（尺寸排在 ICC 之后的情况）。 */
+  const HEAD_BYTES = 96 * 1024;
 
   /* Windows 路径拼接：库里 relPath 一律用 / 分隔，磁盘上用 \ */
   function join(root, rel) {
@@ -69,13 +73,12 @@ const PLATFORM = (() => {
     catch (e) { return 'denied'; }
   }
 
-  /* 扫描用的句柄：第一次取用时才读文件开头一段，构造**真正的 File**。
+  /* 扫描用的句柄。probe() 让主进程读头并就地解析，只回传尺寸/EXIF 这样一个小对象；
+   * getFile() 是备用路径（拿真正的 File），现在扫描不用它了——扫码阶段没必要把
+   * 上 GB 的字节搬进渲染进程，只为读几个字段。
    *
-   * 这里必须是真的 File，不能是自己捏一个带 slice/arrayBuffer 的对象：
-   * exifr 内部判断的是 `input instanceof Blob`，伪对象会直接抛
-   * "Invalid input argument"，被上层 try/catch 吞掉后表现为「照片都没有 EXIF」。
-   * 实测截断到 64KB 仍能正确解析出 GPS 与机型（EXIF 的 APP1 段规范上限就是 64KB），
-   * 所以只读开头不会丢元数据。 */
+   * 保留 getFile 的原因：exifr 只认 `input instanceof Blob`，将来若要把解析搬回页面，
+   * 这条路径仍然可用；伪对象会直接抛 "Invalid input argument"。 */
   function headProvider(absPath, name, size, lastModified) {
     let cached = null;
     return {
@@ -105,6 +108,8 @@ const PLATFORM = (() => {
       lastModified,
       absPath: abs,
       getFile: () => provider.getFile(),
+      /* 元数据探测：{ ok, w, h, make, model, lens, focal, fnum, exposure, iso, date, gps } */
+      probe: () => D.scanMeta(abs, HEAD_BYTES),
     };
   }
 
@@ -171,11 +176,6 @@ const PLATFORM = (() => {
     imageUrl(dir, relPath) {
       if (!dir || !dir.path) return null;
       return 'covefile://local/?p=' + encodeURIComponent(join(dir.path, relPath));
-    },
-
-    /* 直接起进程，不需要自定义协议，也不会有「是否打开」的二次确认 */
-    async launchGpsStamp(folder) {
-      return D.launchGpsStamp(folder);
     },
 
     /* 在资源管理器里显示：文件会选中它本身，目录直接打开 */

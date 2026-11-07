@@ -18,6 +18,22 @@ const SCAN = (() => {
   const LAZY_CONCURRENCY = 3;     // 同时解码的图片数
   const MEM_MAX = 400;            // 内存里最多留多少张的 Blob
 
+  /* 扫描调度参数 */
+  const BATCH_SIZE = 300;   // 每个事务写多少条记录（原 20 条 → 2,389 次事务，现在是 160 次）
+  const PROGRESS_MS = 100;  // 进度回调的最小间隔，避免每张照片都写一次 DOM
+  /* 同时进行中的读头请求数。1 = 完全串行（一次只有一个 IPC 在飞）。
+   * 读头是「IPC 往返 + 随机读 96KB」，瓶颈在延迟而不是 CPU，所以把等待重叠起来就有收益。
+   * 实测全库 4.7 万张（空库、全部要读头）：1 路 31.0s、2 路 22.5s、4 路 16.9s，
+   * 三者的元数据结果完全一致。取 2 是折中：单张 96KB 的临时缓冲，峰值只多几十 KB，
+   * 机械盘上也只多一路寻道，几乎无风险；再往上收益递减。 */
+  const PROBE_WINDOW = 2;
+
+  /* 记录里元数据的版本。v5 及以前的 RAW 记录压根没解析过 EXIF，
+   * 而增量扫描只比对 size/mtime，这些记录永远不会自己补上。
+   * 给 RAW 一个一次性强制重读：扫过一次之后 metaVersion 就是 2，
+   * 之后继续走「stat 相同就跳过」的快路径。 */
+  const META_VERSION = 2;
+
   let _rawEnabled = false;
 
   function setRawEnabled(v) { _rawEnabled = !!v; }
@@ -102,60 +118,10 @@ const SCAN = (() => {
     return _dirCache.get(id) || null;
   }
 
-  /* ============ 轻量尺寸解析（读文件头，不解码） ============ */
-  const HEAD_BYTES = 256 * 1024;
-
-  function dimsFromJpeg(u8) {
-    let i = 2;
-    const n = u8.length;
-    while (i < n - 9) {
-      if (u8[i] !== 0xFF) { i++; continue; }
-      const m = u8[i + 1];
-      if (m === 0xD8 || m === 0x01 || (m >= 0xD0 && m <= 0xD7)) { i += 2; continue; }
-      const len = (u8[i + 2] << 8) | u8[i + 3];
-      const isSOF = (m >= 0xC0 && m <= 0xC3) || (m >= 0xC5 && m <= 0xC7) ||
-                    (m >= 0xC9 && m <= 0xCB) || (m >= 0xCD && m <= 0xCF);
-      if (isSOF) {
-        const h = (u8[i + 5] << 8) | u8[i + 6];
-        const w = (u8[i + 7] << 8) | u8[i + 8];
-        return (w && h) ? { w, h } : null;
-      }
-      i += 2 + len;
-    }
-    return null;
-  }
-
-  function dimsFromHead(u8, ext) {
-    try {
-      if (ext === 'png' && u8[1] === 0x50 && u8[2] === 0x4E && u8[3] === 0x47) {
-        const dv = new DataView(u8.buffer, u8.byteOffset);
-        return { w: dv.getUint32(16), h: dv.getUint32(20) };
-      }
-      if (ext === 'gif') {
-        return { w: u8[6] | (u8[7] << 8), h: u8[8] | (u8[9] << 8) };
-      }
-      if (ext === 'bmp') {
-        const dv = new DataView(u8.buffer, u8.byteOffset);
-        return { w: dv.getInt32(18, true), h: Math.abs(dv.getInt32(22, true)) };
-      }
-      if (ext === 'webp') {
-        const tag = String.fromCharCode(u8[12], u8[13], u8[14], u8[15]);
-        if (tag === 'VP8X') {
-          const w = 1 + (u8[24] | (u8[25] << 8) | (u8[26] << 16));
-          const h = 1 + (u8[27] | (u8[28] << 8) | (u8[29] << 16));
-          return { w, h };
-        }
-        if (tag === 'VP8 ') {
-          const w = (u8[26] | (u8[27] << 8)) & 0x3FFF;
-          const h = (u8[28] | (u8[29] << 8)) & 0x3FFF;
-          return { w, h };
-        }
-        return null;
-      }
-      if (ext === 'jpg' || ext === 'jpeg') return dimsFromJpeg(u8);
-    } catch (e) { /* ignore */ }
-    return null;
-  }
+  /* ============ 尺寸与 EXIF：已搬进主进程 ============
+   * 见 electron/scan-meta.js。页面这侧不再读文件头、也不再调 exifr：
+   * 扫描要的只是「宽高 + 机型 + 时间 + GPS」这几个字段，让主进程读完就地解析，
+   * 回传一个小对象比搬 96KB 字节省得多（两万张就是 10GB 级的差别）。 */
 
   /* 日期合理性：拒绝 1899 之类的零值时间戳，只接受 1990 后、不超明天 */
   function plausibleDate(ts) {
@@ -163,12 +129,14 @@ const SCAN = (() => {
   }
 
   /* ============ 扫描阶段：只读元数据 ============
-   * blob 可能只是文件开头一小段（桌面端为了不整盘读，只取前 512KB），
-   * 所以名字/大小/修改时间一律以 meta 为准，不能从 blob 上取。 */
-  async function processFile(dirId, relPath, blob, old, meta) {
-    const name = (meta && meta.name) || blob.name;
-    const size = (meta && meta.size != null) ? meta.size : blob.size;
-    const mtime = (meta && meta.mtime != null) ? meta.mtime : blob.lastModified;
+   * info 是主进程返回的 { ok, w, h, make, model, … }，照片本身一个字节都不进页面。
+   * v6 起 RAW 也读 96KB 头：以前整类跳过，机型/拍摄时间/光圈/GPS 全丢，
+   * 日期退回文件 mtime，还一律被判成「无位置信息」。RAW 解析不出宽高
+   * （缩略图仍走内嵌 JPEG 预览），但头部 TIFF 里的 EXIF 是实打实读得到的。 */
+  async function processFile(dirId, relPath, info, old, meta, overrides) {
+    const name = (meta && meta.name) || '';
+    const size = (meta && meta.size != null) ? meta.size : null;
+    const mtime = (meta && meta.mtime != null) ? meta.mtime : null;
 
     const ext = RAW.extOf(name);
     const isImage = IMG_EXTS.has(ext);
@@ -180,6 +148,7 @@ const SCAN = (() => {
       dirId, relPath, name, ext, isRaw,
       size,
       mtime,
+      metaVersion: META_VERSION,
       addedAt: old ? old.addedAt : Date.now(),
       width: null, height: null,
       make: '', model: '', lens: '', focal: null, fnum: null, exposure: null, iso: null,
@@ -189,33 +158,37 @@ const SCAN = (() => {
       previewState: 'pending',    // pending | ready | original
     };
 
-    // 1) 尺寸：读文件头解析，不解码像素（RAW 跳过，留给按需解码）
-    if (!isRaw) {
-      try {
-        const head = await blob.slice(0, HEAD_BYTES).arrayBuffer();
-        const dims = dimsFromHead(new Uint8Array(head), ext);
-        if (dims && dims.w > 0 && dims.h > 0) { rec.width = dims.w; rec.height = dims.h; }
-      } catch (e) { /* ignore */ }
+    // 尺寸与 EXIF：主进程读文件头就地解析后回传（RAW 同样读 96KB 头）
+    if (info && info.ok) {
+      if (info.w > 0 && info.h > 0) { rec.width = info.w; rec.height = info.h; }
+      rec.make = info.make || '';
+      rec.model = info.model || '';
+      rec.lens = info.lens || '';
+      rec.focal = info.focal ?? null;
+      rec.fnum = info.fnum ?? null;
+      rec.exposure = info.exposure ?? null;
+      rec.iso = info.iso ?? null;
+      rec.gps = info.gps || null;   // 经纬度，供地图视图点亮使用
+      if (info.date && plausibleDate(+info.date)) rec.date = +info.date;
     }
 
-    // 2) EXIF（exifr 只读元数据段，速度很快；RAW 跳过以避免整块扫描）
-    if (!isRaw) {
-      const ex = await EXIF.parse(blob);
-      Object.assign(rec, {
-        make: ex.make, model: ex.model, lens: ex.lens,
-        focal: ex.focal, fnum: ex.fnum, exposure: ex.exposure, iso: ex.iso,
-        gps: ex.gps || null,   // 经纬度，供地图视图点亮使用
-      });
-      if (!rec.width && ex.width) { rec.width = ex.width; rec.height = ex.height; }
-      if (ex.date) {
-        const t = +new Date(ex.date);
-        if (plausibleDate(t)) rec.date = t;
-      }
-    }
-
-    // 3) 拍摄时间兜底：EXIF 合理时间 → 合理 mtime → null
+    // 拍摄时间兜底：EXIF 合理时间 → 合理 mtime → null
     if (!plausibleDate(rec.date) && plausibleDate(mtime)) rec.date = mtime;
     if (!plausibleDate(rec.date)) rec.date = null;
+
+    /* 坐标优先级：文件里的 EXIF → 应用内补写过并单独持久化的 → 旧记录。
+     * 后两级不能省：exiftool 改文件会变更 mtime，下次扫描就要重建这条记录；
+     * 而它给 RAW 写 GPS 时把 GPS IFD 追加到文件尾部（NEF ~9MB、RW2 ~11MB），
+     * 96KB 头根本够不着，重建一次坐标就凭空消失，地图上的点过一阵子又没了。
+     * 第三级是给「旧版本写入过、还没有 override 记录」的那些照片兜底。 */
+    if (!rec.gps) {
+      const ov = overrides && overrides.get(rec.id);
+      if (ov && Number.isFinite(+ov.lat) && Number.isFinite(+ov.lng)) {
+        rec.gps = { lat: +ov.lat, lng: +ov.lng };
+      } else if (old && old.gps && Number.isFinite(+old.gps.lat) && Number.isFinite(+old.gps.lng)) {
+        rec.gps = { lat: +old.gps.lat, lng: +old.gps.lng };
+      }
+    }
 
     if (isRaw && !_rawEnabled) rec.thumbState = 'unavailable';
     return rec;
@@ -238,6 +211,13 @@ const SCAN = (() => {
       if (opts.dirId != null) dirs = dirs.filter(d => d.id === opts.dirId);
       const oldPhotos = await DB.allPhotos();
       const byId = new Map(oldPhotos.map(p => [p.id, p]));
+      /* 手动补写的坐标单独存一张表：清空索引、重建 RAW 记录之后都要还回去。
+       * 一次性读进内存 Map，别让每张照片都查一次库。 */
+      let gpsOverrides = new Map();
+      try {
+        const rows = await DB.allGpsOverrides();
+        gpsOverrides = new Map(rows.map(r => [r.id, r]));
+      } catch (e) { /* 旧库或读取失败：退到 old.gps 兜底 */ }
       const batch = [];
       const flush = async () => {
         if (!batch.length) return;
@@ -254,40 +234,81 @@ const SCAN = (() => {
         const imgFiles = files.filter(f => IMG_EXTS.has(RAW.extOf(f.name)) || RAW.isRawName(f.name));
 
         let done = 0;
-        for (const f of imgFiles) {
+        const total = imgFiles.length;
+        /* 进度回调节流：以前每张照片都调一次，4.7 万张就是 4.7 万次 DOM 写入。
+         * 更重要的是——跳过（未变化）的文件以前**根本不回调**，于是「已索引部分」
+         * 在进度条上表现为一条纹丝不动的线，越过它之后才开始动，看起来就像
+         * 「前面飞快、后面变慢」。现在所有文件都计入进度，只是限制频率。 */
+        let lastTick = 0;
+        const tick = (force) => {
+          if (!opts.onProgress) return;
+          const now = (typeof performance !== 'undefined') ? performance.now() : Date.now();
+          if (!force && now - lastTick < PROGRESS_MS) return;
+          lastTick = now;
+          opts.onProgress(dir.name, done, total, report);
+        };
+
+        /* 按 PROBE_WINDOW 分窗：先把这一窗里需要读头的文件并发探测，再按原顺序落库。
+         * 顺序不变 → 写入顺序、增量计数、进度语义都和串行时一致。 */
+        for (let start = 0; start < total; start += PROBE_WINDOW) {
           if (opts.shouldAbort && opts.shouldAbort()) { report.aborted = true; break; }
-          const id = dir.id + ':' + f.relPath;
-          const old = byId.get(id);
-          // 大小与 mtime 由枚举阶段直接给出（浏览器是 File 的元数据，桌面端是 fs.stat），
-          // 因此「没变」的文件无需打开，桌面端也就不会把整盘照片读一遍。
-          const size = (f.size != null) ? f.size : null;
-          const mtime = (f.lastModified != null) ? f.lastModified : null;
-          const changed = !old || size == null || mtime == null
-            || old.mtime !== mtime || old.size !== size;
-          if (!changed) { done++; continue; }
+          const win = imgFiles.slice(start, start + PROBE_WINDOW).map(f => {
+            const id = dir.id + ':' + f.relPath;
+            const old = byId.get(id);
+            // 大小与 mtime 由枚举阶段直接给出（浏览器是 File 的元数据，桌面端是 fs.stat），
+            // 因此「没变」的文件无需打开，桌面端也就不会把整盘照片读一遍。
+            const size = (f.size != null) ? f.size : null;
+            const mtime = (f.lastModified != null) ? f.lastModified : null;
+            const isRaw = RAW.isRawName(f.name);
+            const changed = !old || size == null || mtime == null
+              || old.mtime !== mtime || old.size !== size
+              || (isRaw && old && old.metaVersion !== META_VERSION);
+            // v6 起 RAW 也读 96KB 头：EXIF 里的机型/时间/光圈/GPS 就在头部 TIFF 中，
+            // 以前整类跳过，白丢一半元数据，还让所有 RAW 都被判成「无位置信息」。
+            return { f, id, old, size, mtime, changed, isRaw, info: null };
+          });
 
-          let blob;
-          try { blob = await f.getFile(); } catch (e) { done++; continue; }
-
-          // 文件变了 → 旧缩略图/大图已过期，删掉
-          if (old) {
-            _mem.delete(id);
-            try { await DB.deleteAssets(id); } catch (e) { /* ignore */ }
+          const needProbe = win.filter(j => j.changed);
+          if (needProbe.length > 1) {
+            const infos = await Promise.all(needProbe.map(j => j.f.probe().catch(() => null)));
+            needProbe.forEach((j, k) => { j.info = infos[k]; });
+          } else if (needProbe.length === 1) {
+            const j = needProbe[0];
+            try { j.info = await j.f.probe(); } catch (e) { j.info = null; }
           }
 
-          const rec = await processFile(dir.id, f.relPath, blob, old,
-            { name: f.name, size, mtime });
-          done++;
-          if (!rec) { if (old) { await DB.deletePhoto(id); report.removed++; } continue; }
-          report[old ? 'updated' : 'added']++;
-          report.processed++;
-          batch.push(rec);
-          if (batch.length >= 20) {
-            await flush();
-            if (opts.onBatch) opts.onBatch(report);
-            await new Promise(r => setTimeout(r, 0));
+          for (const j of win) {
+            if (opts.shouldAbort && opts.shouldAbort()) { report.aborted = true; break; }
+            if (!j.changed) { done++; tick(); continue; }
+            // 读不到（刚被删、被独占锁定）：保持旧记录不动，和以前的处理一致
+            if (!j.isRaw && (!j.info || !j.info.ok)) { done++; tick(); continue; }
+
+            // 文件变了 → 旧缩略图/大图已过期，删掉
+            if (j.old) {
+              _mem.delete(j.id);
+              try { await DB.deleteAssets(j.id); } catch (e) { /* ignore */ }
+            }
+
+            const rec = await processFile(dir.id, j.f.relPath, j.info, j.old,
+              { name: j.f.name, size: j.size, mtime: j.mtime }, gpsOverrides);
+            done++;
+            if (!rec) {
+              if (j.old) { await DB.deletePhoto(j.id); report.removed++; }
+              tick();
+              continue;
+            }
+            report[j.old ? 'updated' : 'added']++;
+            report.processed++;
+            batch.push(rec);
+            if (batch.length >= BATCH_SIZE) {
+              await flush();
+              if (opts.onBatch) opts.onBatch(report);
+              // 让出主线程：写库是同步起的 IndexedDB 事务，一口气跑完界面会卡住
+              await new Promise(r => setTimeout(r, 0));
+            }
+            tick();
           }
-          if (opts.onProgress) opts.onProgress(dir.name, done, imgFiles.length, report);
+          if (report.aborted) break;
         }
         if (report.aborted) break;
         const validIds = new Set(imgFiles.map(f => dir.id + ':' + f.relPath));
@@ -298,7 +319,7 @@ const SCAN = (() => {
           }
         }
         await flush();
-        if (opts.onProgress) opts.onProgress(dir.name, imgFiles.length, imgFiles.length, report);
+        tick(true);   // 目录收尾：强制把进度推到 100%，不受节流限制
       }
       await flush();
       return report;

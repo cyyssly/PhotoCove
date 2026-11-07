@@ -2,7 +2,7 @@
  *
  * 职责只有四件事：
  *   1. 起一个窗口，把同一份 index.html 加载进来（app:// 协议，而不是 file://）
- *   2. 提供「选目录 / 枚举 / 读文件 / 启动 GPSStamp」的 IPC
+ *   2. 提供「选目录 / 枚举 / 读文件」的 IPC
  *   3. 用 covefile:// 协议直接流式读原图，避免把几十 MB 的照片搬进 JS 堆
  *   4. 把用户数据（IndexedDB）放在程序目录的 data\ 下，保持绿色便携
  *
@@ -15,11 +15,12 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const { Readable } = require('stream');
-const { spawn, execFile, execFileSync } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const os = require('os');
 
 const execFileAsync = promisify(execFile);
+const SCAN_META = require('./scan-meta');
 
 /* 被当成普通 Node 进程时（环境里存在 ELECTRON_RUN_AS_NODE=1），
  * require('electron') 拿到的是路径字符串而不是 API，报错会非常难懂。
@@ -34,12 +35,13 @@ if (!app || typeof app.whenReady !== 'function') {
 const APP_DIR = path.resolve(__dirname, '..');
 
 /* 程序根目录 = PhotoCove.exe 所在目录（dev 下就是项目根）。
- * data\ 和 GPSStamp\ 必须放在这里，不能放 asar 里：
- *   1. asar 是只读归档，IndexedDB 写不进去；
- *   2. 也不能把 asar 内的 .bat 路径交给 cmd.exe，它打不开归档文件。
- * 放 exe 旁边还有个好处：整个文件夹拷走，索引和缩略图跟着走（保持绿色）。 */
+ * data\ 与 backup\ 都放在这里，不能放 asar 里（asar 是只读归档，写不进去）。
+ * 放 exe 旁边还有个好处：整个文件夹拷走，索引、缩略图和备份跟着走（保持绿色）。 */
 const EXE_DIR = app.isPackaged ? path.dirname(process.execPath) : APP_DIR;
 const DATA_DIR = path.join(EXE_DIR, 'data');
+/* 原图备份单独放程序根目录的 backup\，一眼能找到；不放 data\ 里跟索引、缩略图混在一起。
+ * 程序目录不可写时（Program Files 之类）才退回 AppData，见 setupUserData。 */
+let BACKUP_DIR = path.join(EXE_DIR, 'backup');
 const IS_WIN = process.platform === 'win32';
 
 /* dev 下 argv = [electron.exe, '.', ...自定义参数]；打包后 argv = [PhotoCove.exe, ...自定义参数] */
@@ -212,47 +214,8 @@ async function walkDir(root) {
   return out;
 }
 
-/* ============ 6. GPSStamp ============
- * 依次在「exe 旁边 → 上一级 → 站点根」找。打包后 GPSStamp\ 由 electron-builder
- * 的 extraFiles 放到 exe 同级；dev 下就在项目根。 */
-function findGpsStamp() {
-  const cands = [
-    path.join(EXE_DIR, 'GPSStamp', 'GPSStamp.bat'),
-    path.join(path.dirname(EXE_DIR), 'GPSStamp', 'GPSStamp.bat'),
-    path.join(APP_DIR, 'GPSStamp', 'GPSStamp.bat'),
-  ];
-  for (const c of cands) {
-    try { if (fs.existsSync(c)) return c; } catch (e) { /* ignore */ }
-  }
-  return '';
-}
-
-function launchGpsStamp(folder, missingOnly) {
-  const bat = findGpsStamp();
-  if (!bat) return { ok: false, error: '没有找到 GPSStamp\\GPSStamp.bat' };
-  if (folder) {
-    try {
-      if (!fs.statSync(toFsPath(folder)).isDirectory()) {
-        return { ok: false, error: '不是一个文件夹：' + folder };
-      }
-    } catch (e) {
-      return { ok: false, error: '文件夹不存在：' + folder };
-    }
-  }
-  // --missing-only：只载入没有 GPS 的照片。少了这个参数就会全量载入，
-  // 一按写入就把这些照片原本的坐标全部覆盖成同一个点。
-  const args = ['/c', 'start', '', bat];
-  if (folder) args.push('--missing-only', folder);
-  try {
-    spawn('cmd.exe', args, { detached: true, stdio: 'ignore', windowsHide: true }).unref();
-    return { ok: true, bat };
-  } catch (e) {
-    return { ok: false, error: e && e.message ? e.message : String(e) };
-  }
-}
-
-/* ============ 6.5 exiftool：写 GPS 与地名查询 ============
- * 写入沿用 GPSStamp 已经验证过的那套调用方式，参数一个都不改：
+/* ============ 6. exiftool：写 GPS 与地名查询 ============
+ * 写入沿用早期外部工具已验证过的那套调用方式，参数一个都不改：
  *   - 参数文件（-@）而不是命令行：中文路径直接当命令行参数会触发
  *     "FileName encoding must be specified"，且路径里的空格会被当成分隔符。
  *   - -charset filename=utf8：让 exiftool 按 UTF-8 解析参数文件里的路径。
@@ -262,7 +225,7 @@ function launchGpsStamp(folder, missingOnly) {
  */
 let _exiftool = '';
 
-/* GPSStamp 早就把「它找到的 exiftool 在哪」写进了自己的 settings.ini。
+/* 早期外部工具把「它找到的 exiftool 在哪」写进了自己的 settings.ini。
  * 同一台机器上没必要让用户再选一次，直接拿来用；文件读不到就算了。 */
 function exiftoolFromGpsStamp(baseDir) {
   try {
@@ -298,7 +261,7 @@ function findExifTool() {
     try { if (c && fs.existsSync(c)) { _exiftool = c; return c; } } catch (e) { /* ignore */ }
   }
 
-  // 从 GPSStamp 的配置里捡现成的（它一定已经把路径找好了）
+  // 从旧工具的配置里捡现成的（它一定已经把路径找好了），文件不在就跳过
   const fromStamp = exiftoolFromGpsStamp(EXE_DIR) || exiftoolFromGpsStamp(APP_DIR);
   if (fromStamp) { _exiftool = fromStamp; return fromStamp; }
 
@@ -313,12 +276,13 @@ function findExifTool() {
   return '';
 }
 
-/* 备份放到 data\gps-backup\ 下，镜像原路径（F:\a\b.jpg → data\gps-backup\F\a\b.jpg）。
+/* 备份放到程序根目录的 backup\ 下，镜像原路径
+ * （F:\a\b.jpg → backup\F\a\b.jpg；dev 下即项目根\backup\F\a\b.jpg）。
  * 不用 exiftool 自带的 "_original" 同目录备份：那会在照片文件夹里多出
  * xxx_original.jpg，下次扫描会当成新照片索引进来，作品集里凭空多一倍重复图。 */
 function gpsBackupPathOf(abs) {
   const rel = String(abs).replace(/^([a-zA-Z]):[\\/]/, '$1/').replace(/[:*?"<>|]/g, '_');
-  return path.join(DATA_DIR, 'gps-backup', rel);
+  return path.join(BACKUP_DIR, rel);
 }
 
 function writeArgFile(lines) {
@@ -357,6 +321,309 @@ function cleanExifToolLines(text) {
 }
 
 /* ============ 7. IPC ============ */
+
+/* ---- 地名搜索 ----
+ * 中文查询先走百度地图 POI，再退回 Nominatim/OSM。原因很直接：
+ * OSM 的中文 POI 常常只收官方名，「广州国际会议展览中心」在 OSM 里叫
+ * 「中国进出口商品交易会展馆」、别名只登记了「广交会展馆」，按常用名
+ * 根本搜不到；Nominatim 搜不到时还会给一条毫不相干的结果（实测是合肥
+ * 「湖光路」）。百度的中文名称和别名覆盖是 OSM 比不了的，所以它排第一。
+ * 百度不可用时才走 Nominatim 的三步（相关性过滤 / 城市边界内二次检索 /
+ * 场馆分类检索），保证断网或接口变更时还有一路能用。 */
+const NOMINATIM_UA = 'PhotoCove/18.0 (local photo library; desktop)';
+const _cityCache = new Map();
+const _geoCache = new Map();          // 同一个地名搜两次不必再打一次网络
+const GEO_CACHE_MAX = 40;
+
+async function nominatimSearch(params) {
+  const url = 'https://nominatim.openstreetmap.org/search?' + params.toString();
+  const r = await net.fetch(url, {
+    headers: { 'User-Agent': NOMINATIM_UA, 'Accept': 'application/json' },
+  });
+  if (!r.ok) throw new Error('地名服务返回 ' + r.status);
+  const arr = await r.json();
+  return Array.isArray(arr) ? arr : [];
+}
+
+/* 查询与结果名的字面相关性：按空格/逗号拆词，任一词命中即可。
+ * 中文整串往往很长，取 3 字滑窗比对；2 字以内的词整串比对。
+ * 这样「广州白云机场」能命中「广州白云国际机场」，
+ * 而「广州国际会议展览中心」不会命中合肥的「湖光路」。 */
+function relatedToQuery(it, query) {
+  const text = (String(it.name || '') + ' ' + String(it.display_name || '')).toLowerCase();
+  const tokens = String(query).toLowerCase().split(/[\s,，、]+/).filter(t => t.length >= 2);
+  return tokens.some(t => {
+    if (t.length < 3) return text.includes(t);
+    for (let i = 0; i + 3 <= t.length; i++) {
+      if (text.includes(t.slice(i, i + 3))) return true;
+    }
+    return false;
+  });
+}
+
+/* 从查询开头猜城市：2/3/4 字前缀，用 Nominatim 的 city 类型校验同名。
+ * 结果缓存住，同一个城市不必反复请求。 */
+async function cityOfQuery(query) {
+  if (/[a-z]/.test(query)) return null;
+  for (const len of [2, 3, 4]) {
+    if (query.length < len + 2) continue;
+    const prefix = query.slice(0, len);
+    if (_cityCache.has(prefix)) {
+      const v = _cityCache.get(prefix);
+      if (v) return { name: prefix, ...v };
+      continue;
+    }
+    let hit = null;
+    try {
+      const arr = await nominatimSearch(new URLSearchParams({
+        format: 'jsonv2', limit: '1', featureType: 'city',
+        'accept-language': 'zh-CN,zh', q: prefix,
+      }));
+      const it = arr[0];
+      const strip = s => String(s || '').replace(/[市区县州盟旗]$/, '');
+      if (it && Array.isArray(it.boundingbox) && strip(it.name) === strip(prefix)) {
+        const bb = it.boundingbox.map(Number);   // [南, 北, 西, 东]
+        hit = { viewbox: `${bb[2]},${bb[1]},${bb[3]},${bb[0]}`, display: String(it.display_name || '') };
+      }
+    } catch (e) { /* 猜不出城市就当没有 */ }
+    _cityCache.set(prefix, hit);
+    if (hit) return { name: prefix, ...hit };
+  }
+  return null;
+}
+
+/* 场馆类型词 → OSM 分类：名字对不上时按类型找，是中文 POI 的另一条路 */
+const PLACE_TAGS = [
+  { re: /会展|展览|博览|展馆|会议展览|会议中心/, tag: ['amenity', 'conference_centre'] },
+  { re: /机场/, tag: ['aeroway', 'aerodrome'] },
+  { re: /火车站|高铁站/, tag: ['railway', 'station'] },
+  { re: /医院/, tag: ['amenity', 'hospital'] },
+  { re: /大学|学院/, tag: ['amenity', 'university'] },
+  { re: /博物馆/, tag: ['tourism', 'museum'] },
+  { re: /图书馆/, tag: ['amenity', 'library'] },
+  { re: /体育馆|体育场|球场/, tag: ['leisure', 'sports_centre'] },
+];
+
+function tagOfQuery(query) {
+  const hit = PLACE_TAGS.find(x => x.re.test(query));
+  return hit ? hit.tag : null;
+}
+
+function toGeocodeResults(arr) {
+  return (Array.isArray(arr) ? arr : []).slice(0, 8).map(it => {
+    const lat = Number(it.lat);
+    const lng = Number(it.lon);
+    const dn = String(it.display_name || '');
+    const first = String(it.name || dn.split(',')[0] || '').trim();
+    return { lat, lng, label: first, detail: dn.split(',').slice(1).join(',').trim() };
+  }).filter(x => isFinite(x.lat) && isFinite(x.lng));
+}
+
+/* ---------- 百度 POI 检索 ----------
+ * 网页端自己用的 /?qt=s 接口，不需要 Key。返回的坐标是 BD-09 墨卡托（米），
+ * 必须换算成 WGS-84 才能和照片 EXIF、OSM 底图对齐。换算精度实测在十几米内
+ * （天安门 39.907372,116.391347 对 OSM 39.907359,116.391263；
+ *   广州塔 23.108885,113.319112 对 OSM 23.109015,113.319148）。 */
+const BAIDU_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+
+const PI = 3.1415926535897932384626;
+const X_PI = PI * 3000 / 180;
+const ELL_A = 6378245.0;
+const ELL_EE = 0.00669342162296594323;
+
+/* 百度墨卡托 → BD-09 经纬度：按纬度分带的拟合系数（官方投影的逆运算） */
+const MC_BAND = [12890594.86, 8362377.87, 5591021, 3481989.83, 1678043.12, 0];
+const MC_LL = [
+  [1.410526172116255e-8, 0.00000898305509648872, -1.9939833816331, 200.9824383106796, -187.2403703815547, 91.6087516669843, -23.38765649603339, 2.57121317296198, -0.03801003308653, 17337981.2],
+  [-7.435856389565537e-9, 0.000008983055097726239, -0.78625201886289, 96.32687599759846, -1.85204757529826, -59.36935905485877, 47.40033549296737, -16.50741931063887, 2.28786674699375, 10260144.86],
+  [-3.030883460898826e-8, 0.00000898305509983578, 0.30071316287616, 59.74293618442277, 7.357984074871, -25.38371002664745, 13.45380521110908, -3.29883767235584, 0.32710905363475, 6856817.37],
+  [-1.981981304930552e-8, 0.000008983055099779535, 0.03278182852591, 40.31678527705744, 0.65659298677277, -4.44255534477492, 0.85341911805263, 0.12923347998204, -0.04625736007561, 4482777.06],
+  [3.09191371068437e-9, 0.000008983055096812155, 0.00006995724062, 23.10934304144901, -0.00023663490511, -0.6321817810242, -0.00663494467273, 0.03430082397953, -0.00466043876332, 2555164.4],
+  [2.890871144776878e-9, 0.000008983055095805407, -3.068298e-8, 7.47137025468032, -0.00000353937994, -0.02145144861037, -0.00001234426596, 0.00010322952773, -0.00000323890364, 826088.5],
+];
+
+function bdMcToLngLat(x, y) {
+  let cF = MC_LL[MC_LL.length - 1];
+  for (let i = 0; i < MC_BAND.length; i++) {
+    if (y >= MC_BAND[i]) { cF = MC_LL[i]; break; }
+  }
+  const lng = cF[0] + cF[1] * x;
+  const c = y / cF[9];
+  let lat = cF[2];
+  let p = c;
+  for (let i = 3; i <= 8; i++) { lat += cF[i] * p; p *= c; }
+  return [lng, lat];
+}
+
+function bd09ToGcj02(lng, lat) {
+  const x = lng - 0.0065;
+  const y = lat - 0.006;
+  const z = Math.sqrt(x * x + y * y) - 0.00002 * Math.sin(y * X_PI);
+  const theta = Math.atan2(y, x) - 0.000003 * Math.cos(x * X_PI);
+  return [z * Math.cos(theta), z * Math.sin(theta)];
+}
+
+function transformLat(lng, lat) {
+  let r = -100 + 2 * lng + 3 * lat + 0.2 * lat * lat + 0.1 * lng * lat + 0.2 * Math.sqrt(Math.abs(lng));
+  r += (20 * Math.sin(6 * lng * PI) + 20 * Math.sin(2 * lng * PI)) * 2 / 3;
+  r += (20 * Math.sin(lat * PI) + 40 * Math.sin(lat / 3 * PI)) * 2 / 3;
+  r += (160 * Math.sin(lat / 12 * PI) + 320 * Math.sin(lat * PI / 30)) * 2 / 3;
+  return r;
+}
+
+function transformLng(lng, lat) {
+  let r = 300 + lng + 2 * lat + 0.1 * lng * lng + 0.1 * lng * lat + 0.1 * Math.sqrt(Math.abs(lng));
+  r += (20 * Math.sin(6 * lng * PI) + 20 * Math.sin(2 * lng * PI)) * 2 / 3;
+  r += (20 * Math.sin(lng * PI) + 40 * Math.sin(lng / 3 * PI)) * 2 / 3;
+  r += (150 * Math.sin(lng / 12 * PI) + 300 * Math.sin(lng / 30 * PI)) * 2 / 3;
+  return r;
+}
+
+/* GCJ-02 → WGS-84：用正变换的偏差反推一次，误差在 1 米量级 */
+function gcj02ToWgs84(lng, lat) {
+  const dLat = transformLat(lng - 105, lat - 35);
+  const dLng = transformLng(lng - 105, lat - 35);
+  const radLat = lat / 180 * PI;
+  let magic = Math.sin(radLat);
+  magic = 1 - ELL_EE * magic * magic;
+  const sm = Math.sqrt(magic);
+  const mgLat = lat + (dLat * 180) / ((ELL_A * (1 - ELL_EE)) / (magic * sm) * PI);
+  const mgLng = lng + (dLng * 180) / (ELL_A / sm * Math.cos(radLat) * PI);
+  return [lng * 2 - mgLng, lat * 2 - mgLat];
+}
+
+/* 百度 geo 字段形如 "1|12620391.87,2627769.46;..."，前面还有可能是经纬度而不是墨卡托，
+ * 按数值范围判断。返回 null 表示这条记录没有可用坐标。 */
+function baiduGeoToWgs84(geo) {
+  const parts = String(geo || '').split('|');
+  const pair = (parts[1] || parts[0] || '').split(';')[0].split(',');
+  let lng = Number(pair[0]);
+  let lat = Number(pair[1]);
+  if (!isFinite(lng) || !isFinite(lat)) return null;
+  if (Math.abs(lng) > 180 || Math.abs(lat) > 90) [lng, lat] = bdMcToLngLat(lng, lat);
+  const g = bd09ToGcj02(lng, lat);
+  const w = gcj02ToWgs84(g[0], g[1]);
+  if (Math.abs(w[1]) > 90 || Math.abs(w[0]) > 180) return null;
+  return { lat: w[1], lng: w[0] };
+}
+
+/* 名字与查询词的贴合度：整串命中 > 包含 > 前缀 > 完全不沾。
+ * 百度按自己的热度排序，「国际会展中心」这种只沾一半的会排在
+ * 「广州国际会议展览中心-5号门」前面，必须按贴合度重排。 */
+function matchScore(name, query) {
+  const a = String(name || '').toLowerCase().replace(/\s+/g, '');
+  if (!a) return 0;
+  let best = 0;
+  for (const raw of String(query).toLowerCase().split(/[\s,，、]+/)) {
+    const t = raw.replace(/\s+/g, '');
+    if (!t) continue;
+    let s = 0;
+    if (a === t) s = 1000;
+    else if (a.includes(t)) s = 900;
+    else if (t.includes(a) && a.length >= 2) s = 700;
+    else {
+      let i = 0;
+      while (i < a.length && i < t.length && a[i] === t[i]) i++;
+      s = i >= 3 ? i * 20 : 0;
+    }
+    if (s > best) best = s;
+  }
+  return best;
+}
+
+async function baiduPoiSearch(query) {
+  const url = 'https://map.baidu.com/?qt=s&wd=' + encodeURIComponent(query) +
+    '&rn=12&ie=utf-8&oue=1&fromproduct=jsapi&res=api';
+  const r = await net.fetch(url, {
+    headers: {
+      'User-Agent': BAIDU_UA,
+      'Referer': 'https://map.baidu.com/',
+      'Accept': 'application/json',
+    },
+  });
+  if (!r.ok) throw new Error('百度地名服务返回 ' + r.status);
+  const j = await r.json();
+  const list = Array.isArray(j && j.content) ? j.content : [];
+  return list.map(it => {
+    const ll = baiduGeoToWgs84(it.geo);
+    if (!ll || !it.name) return null;
+    return {
+      name: String(it.name).trim(),
+      addr: String(it.addr || '').trim(),
+      lat: ll.lat,
+      lng: ll.lng,
+      score: matchScore(it.name, query),
+    };
+  }).filter(x => x && x.score > 0).sort((a, b) => b.score - a.score);
+}
+
+/* 返回 { list, note }：note 是给界面看的一句话（例如百度不可用），没有就是空串。
+ * note 跟结果一起进缓存，同一个词再搜一次也能拿到同样的提示。 */
+async function geocodeQuery(query) {
+  if (_geoCache.has(query)) return _geoCache.get(query);
+  const keep = (list, note) => {
+    if (_geoCache.size >= GEO_CACHE_MAX) _geoCache.delete(_geoCache.keys().next().value);
+    const hit = { list: list || [], note: note || '' };
+    _geoCache.set(query, hit);
+    return hit;
+  };
+
+  // 百度不通（断网 / 接口变更 / 被拦）时记一条提示一路带到界面，不再静默退回 OSM：
+  // 静默的结果是界面看不出「这批结果其实来自次优来源」，出问题也无从查起。
+  let note = '';
+
+  // 1. 具体地名的中文查询先走百度 POI：中文名称与别名覆盖是 OSM 比不了的。
+  //    2~3 字多半是城市/区县这类行政地名，OSM 的行政区数据更靠谱，仍走 Nominatim。
+  if (/[\u4e00-\u9fff]/.test(query) && query.length >= 4) {
+    try {
+      const baidu = await baiduPoiSearch(query);
+      if (baidu.length) {
+        const exact = baidu.filter(x => x.score >= 900);
+        const use = (exact.length ? exact : baidu).slice(0, 8);
+        return keep(use.map(x => ({ lat: x.lat, lng: x.lng, label: x.name, detail: x.addr })));
+      }
+    } catch (e) {
+      note = '百度地名服务不可用，已改为 OpenStreetMap 检索。';
+    }
+  }
+
+  // 2. 自由文本：只留与查询词有字面交集的条目
+  const raw = await nominatimSearch(new URLSearchParams({
+    format: 'jsonv2', limit: '8', addressdetails: '1',
+    'accept-language': 'zh-CN,zh', q: query,
+  }));
+  const picked = raw.filter(it => relatedToQuery(it, query));
+  if (picked.length) return keep(toGeocodeResults(picked), note);
+
+  // 2. 开头是城市名：在城市边界内再搜剩下的部分
+  const city = await cityOfQuery(query);
+  if (!city) return keep([], note);
+  const rest = query.slice(city.name.length).replace(/^[市\s,，、]+/, '');
+  if (rest.length >= 2) {
+    const bounded = await nominatimSearch(new URLSearchParams({
+      format: 'jsonv2', limit: '8', addressdetails: '1',
+      'accept-language': 'zh-CN,zh', q: rest, viewbox: city.viewbox, bounded: '1',
+    }));
+    const good = bounded.filter(it => relatedToQuery(it, rest));
+    if (good.length) return keep(toGeocodeResults(good), note);
+  }
+
+  // 3. 按场馆分类找：OSM 里名字对不上的场馆靠这一步能捞回来
+  const tag = tagOfQuery(rest || query);
+  if (tag) {
+    const params = new URLSearchParams({
+      format: 'jsonv2', limit: '8', addressdetails: '1',
+      'accept-language': 'zh-CN,zh', viewbox: city.viewbox, bounded: '1',
+    });
+    params.set(tag[0], tag[1]);
+    const byTag = await nominatimSearch(params);
+    if (byTag.length) return keep(toGeocodeResults(byTag), note);
+  }
+
+  return keep([], note);
+}
+
 function registerIpc() {
   ipcMain.handle('cove:info', () => ({
     version: app.getVersion(),
@@ -366,9 +633,9 @@ function registerIpc() {
     appDir: APP_DIR,
     exeDir: EXE_DIR,
     dataDir: DATA_DIR,
+    backupDir: BACKUP_DIR,
     userData: app.getPath('userData'),
     packaged: app.isPackaged,
-    gpsstamp: findGpsStamp(),
   }));
 
   ipcMain.handle('cove:pickDir', async (event) => {
@@ -420,6 +687,44 @@ function registerIpc() {
     }
   });
 
+  /* 扫描用的元数据：读文件头 → 主进程解析 → 只回传尺寸/EXIF。
+   * 页面不再拿到原始字节，也就没有「512KB × 两万张」的跨进程拷贝。
+   * 返回值一律是纯对象（Date 已转成毫秒数），可直接跨 IPC。 */
+  ipcMain.handle('cove:scanMeta', async (_e, p, bytes) => {
+    const ext = path.extname(String(p || '')).slice(1).toLowerCase();
+    const raw = SCAN_META.isRawExt(ext);
+    const first = Math.max(4096, Math.min(Number(bytes) || SCAN_META.HEAD_BYTES, 4 * 1024 * 1024));
+    let fh;
+    try {
+      const st = await fsp.stat(toFsPath(p));
+      fh = await fsp.open(toFsPath(p), 'r');
+      const readAt = async (n) => {
+        const size = Math.min(st.size, n);
+        const buf = Buffer.allocUnsafe(size);
+        const { bytesRead } = await fh.read(buf, 0, size, 0);
+        return { buf, bytesRead };
+      };
+      let { buf, bytesRead } = await readAt(first);
+      let meta = await SCAN_META.describe(buf.subarray(0, bytesRead), ext);
+      // 尺寸或 EXIF 没解出来、而文件还有更多内容：多半是 ICC/大段 APP 排在前面，
+      // 退回一次更大的窗口重试。只对这类文件多读，正常照片一次就够。
+      // RAW 不参与：它本来就解析不出尺寸，若用「没有宽高」当补读条件，
+      // 上万张 RAW 会每张多读 512KB；而 exiftool 写进 RAW 的 GPS 在文件尾部，
+      // 512KB 同样够不着。补写坐标改由索引里的 gpsOverrides 兜住。
+      if (!raw && (!meta.w || (!meta.make && !meta.date && !meta.gps)) && st.size > bytesRead) {
+        const retry = await readAt(Math.max(SCAN_META.RETRY_BYTES, first));
+        if (retry.bytesRead > bytesRead) {
+          meta = await SCAN_META.describe(retry.buf.subarray(0, retry.bytesRead), ext);
+        }
+      }
+      return { ok: true, size: st.size, ...meta };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) ? e.message : String(e) };
+    } finally {
+      if (fh) { try { await fh.close(); } catch (e) { /* ignore */ } }
+    }
+  });
+
   /* 整文件读取：只在真正要解码显示时才用 */
   ipcMain.handle('cove:file', async (_e, p) => {
     try {
@@ -429,8 +734,6 @@ function registerIpc() {
       throw new Error('读取失败：' + (e && e.message ? e.message : e));
     }
   });
-
-  ipcMain.handle('cove:gpsstamp', async (_e, folder, missingOnly) => launchGpsStamp(folder, missingOnly !== false));
 
   /* ---- GPS 编辑：exiftool 探测 / 手动指定 ---- */
   ipcMain.handle('cove:exiftool', () => {
@@ -537,29 +840,16 @@ function registerIpc() {
   });
 
   /* ---- 地名 → 坐标 ----
-   * 用 OpenStreetMap 的 Nominatim：免 Key，返回 WGS-84，
-   * 与照片 EXIF 和底图同一坐标系，不需要 GCJ-02/BD-09 那套纠偏。
-   * 使用条款要求带可识别的 User-Agent，且不要高频请求（这里由用户手动触发）。 */
+   * 中文具体地名先走百度 POI（名称/别名覆盖），不通再退回 OpenStreetMap 的 Nominatim；
+   * 两条路都返回 WGS-84，与照片 EXIF 和底图同一坐标系，不需要再做 GCJ-02/BD-09 纠偏。
+   * note 是给界面的来源提示（例如「百度不可用，已改用 OSM」），正常为空串。 */
   ipcMain.handle('cove:geocode', async (_e, q) => {
     const query = String(q || '').trim();
     if (!query) return { ok: false, error: '请输入地名' };
     if (query.length > 120) return { ok: false, error: '地名太长了' };
-    const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=8&addressdetails=1'
-      + '&accept-language=zh-CN,zh&q=' + encodeURIComponent(query);
     try {
-      const r = await net.fetch(url, {
-        headers: { 'User-Agent': 'PhotoCove/18.0 (local photo library; desktop)', 'Accept': 'application/json' },
-      });
-      if (!r.ok) return { ok: false, error: '地名服务返回 ' + r.status };
-      const arr = await r.json();
-      const results = (Array.isArray(arr) ? arr : []).slice(0, 8).map(it => {
-        const lat = Number(it.lat);
-        const lng = Number(it.lon);
-        const dn = String(it.display_name || '');
-        const first = String(it.name || dn.split(',')[0] || '').trim();
-        return { lat, lng, label: first, detail: dn.split(',').slice(1).join(',').trim() };
-      }).filter(x => isFinite(x.lat) && isFinite(x.lng));
-      return { ok: true, results };
+      const r = await geocodeQuery(query);
+      return { ok: true, results: r.list, note: r.note };
     } catch (e) {
       return { ok: false, error: '联网失败：' + (e && e.message ? e.message : String(e)) };
     }
@@ -588,9 +878,13 @@ function setupUserData() {
     fs.writeFileSync(probe, 'ok');
     fs.unlinkSync(probe);
     app.setPath('userData', DATA_DIR);
+    // 备份目录启动时就建好，不用等到第一次写入才出现，方便直接找到
+    try { if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true }); } catch (e) { /* 不影响索引 */ }
     return true;
   } catch (e) {
     console.warn('[cove] 程序目录不可写，改用系统 AppData：', e && e.message);
+    // 连程序根都写不进去时，备份也只能跟着退到 AppData
+    BACKUP_DIR = path.join(app.getPath('userData'), 'backup');
     return false;
   }
 }
@@ -749,7 +1043,11 @@ async function shootPage(file, fullPage) {
 }
 
 /* ============ 11. 生命周期 ============ */
-if (!app.requestSingleInstanceLock()) {
+/* 单实例锁按 userData 判定，而 userData 要到 whenReady 才改成程序目录，
+ * 所以开发时主程序开着的情况下，再起一个实例会静默退出（exit 0、无输出），
+ * 截图/自测都没法跑。开发态给一个逃生口：COVE_NO_LOCK=1 时跳过锁。 */
+const NO_LOCK = !app.isPackaged && process.env.COVE_NO_LOCK === '1';
+if (!NO_LOCK && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -804,14 +1102,17 @@ if (!app.requestSingleInstanceLock()) {
             })()`, true);
             console.log('SHOT_SCAN ' + JSON.stringify(r));
             await wait(4500);   // 让缩略图先出一批（每张都要解码 + 编码，串行度 3）
-            if (SHOT_VIEW) {
-              await mainWin.webContents.executeJavaScript(
-                `(document.querySelector('.nav-btn[data-view="${SHOT_VIEW}"]') || {}).click?.()`, true);
-              await wait(2500);
-            }
           } catch (e) {
             console.log('SHOT_SCAN_FAIL ' + (e && e.message));
           }
+        }
+        // 切视图不依赖 --dir：只想看设置页/帮助页时不必真扫一遍照片
+        if (SHOT_VIEW) {
+          try {
+            await mainWin.webContents.executeJavaScript(
+              `(document.querySelector('.nav-btn[data-view="${SHOT_VIEW}"]') || {}).click?.()`, true);
+            await wait(SELFTEST_DIR ? 2500 : 1200);
+          } catch (e) { console.log('SHOT_VIEW_FAIL ' + (e && e.message)); }
         }
         try {
           await shootPage(SHOT);
