@@ -172,8 +172,9 @@ const SCAN = (() => {
       if (info.date && plausibleDate(+info.date)) rec.date = +info.date;
     }
 
-    // 拍摄时间兜底：EXIF 合理时间 → 合理 mtime → null
-    if (!plausibleDate(rec.date) && plausibleDate(mtime)) rec.date = mtime;
+    /* 拍摄时间只认 EXIF。文件修改时间不是拍摄时间：写回 GPS、复制、整理目录
+     * 都会改它，拿去当日期会让老照片凭空跳到今年。读不到就记 null（未知），
+     * 界面显示文件名、时间轴不收录，与「最新/最旧」排序里的 shotOf 口径一致。 */
     if (!plausibleDate(rec.date)) rec.date = null;
 
     /* 坐标优先级：文件里的 EXIF → 应用内补写过并单独持久化的 → 旧记录。

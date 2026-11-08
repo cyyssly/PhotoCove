@@ -110,7 +110,21 @@
   <section id="view-albums" class="view hidden">
     <div id="albums-grid" class="albums-grid"></div>
     <div id="album-detail" class="hidden">
-      <h2 id="album-title" class="album-title"></h2>
+      <div class="album-head">
+        <h2 id="album-title" class="album-title"></h2>
+        <!-- 相册详情右上角的三个图标按钮：重新扫描 / 标记 GPS / 在文件夹中显示 -->
+        <div class="album-tools">
+          <button id="album-rescan" class="album-icon" type="button" title="重新扫描这个相册所在的图片库">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.7 8a5.3 5.3 0 1 1 1.6 3.8"/><path d="M2.4 13.2v-3.6h3.6"/></svg>
+          </button>
+          <button id="album-gps" class="album-icon" type="button" title="给这个相册里没有位置信息的照片标记 GPS">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 14.2c2.8-3 4.4-5.4 4.4-7.3a4.4 4.4 0 1 0-8.8 0c0 1.9 1.6 4.3 4.4 7.3z"/><circle cx="8" cy="6.8" r="1.6"/></svg>
+          </button>
+          <button id="album-reveal" class="album-icon" type="button" title="在文件夹中显示这个相册的照片">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.2 12.4V4h4.2l1.4 1.8h6V12.4z"/></svg>
+          </button>
+        </div>
+      </div>
       <div id="album-grid" class="masonry"></div>
     </div>
     <div id="albums-empty" class="empty-state hidden"><p>暂无照片。</p></div>

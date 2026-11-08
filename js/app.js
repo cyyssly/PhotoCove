@@ -511,9 +511,9 @@
     window.__COVE_BOOTED = true;   // 自测脚本等这个标记，再确认页面已就绪
   }
 
-  /* 供地图页等其他模块复用：提示条与确认框 */
+  /* 供地图页等其他模块复用：提示条、确认框、重新扫描 */
   window.APP = {
-    toast, confirmDialog,
+    toast, confirmDialog, rescan: runScan,
   };
 
   document.addEventListener('DOMContentLoaded', boot);

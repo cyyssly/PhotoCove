@@ -88,7 +88,8 @@ const VIEWS = (() => {
   function buildFilterOptions() {
     const years = new Set(), cams = new Set(), albums = new Set();
     for (const p of state.photos) {
-      if (p.date) years.add(new Date(p.date).getFullYear());
+      const shot = shotOf(p);
+      if (shot) years.add(new Date(shot).getFullYear());
       const cam = EXIF.fmtCamera(p.make, p.model);
       if (cam) cams.add(cam);
       albums.add(albumKeyOf(p));
@@ -109,7 +110,8 @@ const VIEWS = (() => {
   function applyFilters() {
     const { year, camera, album } = state.filters;
     state.filtered = state.photos.filter(p => {
-      if (year && String(p.date ? new Date(p.date).getFullYear() : '') !== year) return false;
+      const shot = shotOf(p);
+      if (year && String(shot ? new Date(shot).getFullYear() : '') !== year) return false;
       if (camera && EXIF.fmtCamera(p.make, p.model) !== camera) return false;
       if (album && albumKeyOf(p) !== album) return false;
       return true;
@@ -294,7 +296,8 @@ const VIEWS = (() => {
     }
     const d = document.createElement('span');
     d.className = 'item-date';
-    d.textContent = p.date ? fmtDate(p.date) : p.name;
+    const shot = shotOf(p);
+    d.textContent = shot ? fmtDate(shot) : p.name;
     el.appendChild(d);
     el.addEventListener('click', () => onClick(p));
     // 悬停 220ms 后预取大图预览：光标停留多半意味着要打开这张，提前解码省掉等待
@@ -467,13 +470,13 @@ const VIEWS = (() => {
     clearPagers();
     const wrap = $('#timeline');
     wrap.innerHTML = '';
-    const list = sortedByDate(state.filtered).filter(p => p.date);
+    const list = sortedByDate(state.filtered).filter(p => shotOf(p));
     $('#timeline-empty').classList.toggle('hidden', list.length > 0);
 
     // 月份计数：用于「X 月 · N 张」标签（分组头可能在后续批次才出现）
     const monthCount = new Map();
     for (const p of list) {
-      const d = new Date(p.date);
+      const d = new Date(shotOf(p));
       const k = d.getFullYear() + '-' + d.getMonth();
       monthCount.set(k, (monthCount.get(k) || 0) + 1);
     }
@@ -489,7 +492,7 @@ const VIEWS = (() => {
         const frag = document.createDocumentFragment();
         for (let i = from; i < to; i++) {
           const p = list[i];
-          const d = new Date(p.date);
+          const d = new Date(shotOf(p));
           const y = d.getFullYear();
           const k = y + '-' + d.getMonth();
           if (y !== lastYear) {
@@ -538,10 +541,11 @@ const VIEWS = (() => {
     albums.forEach(a => {
       const card = document.createElement('div');
       card.className = 'album-card';
+      const coverShot = shotOf(a.items[0] || {});
       card.innerHTML = `
         <div class="album-cover"><span class="album-count">${a.items.length} 张</span></div>
         <div class="album-meta"><div class="album-name">${esc(a.name)}</div>
-        <div class="album-sub">${a.items[0] && a.items[0].date ? fmtDate(a.items[0].date) : ''}</div></div>`;
+        <div class="album-sub">${coverShot ? fmtDate(coverShot) : ''}</div></div>`;
       const coverEl = card.querySelector('.album-cover');
       if (a.cover) fillMedia(coverEl, a.cover, false);
       // 封面优先复用它，点击进相册
@@ -549,6 +553,42 @@ const VIEWS = (() => {
       grid.appendChild(card);
     });
     $('#albums-empty').classList.toggle('hidden', state.photos.length > 0);
+  }
+
+  /* ---- 相册详情右上角的三个图标按钮 ----
+   * 作用范围只有当前进入的这个相册：重新扫描它所在的图片库、给它里面没有
+   * 坐标的照片补 GPS、在资源管理器里定位它的一张照片。 */
+  function albumPhotos() {
+    if (!state.album) return [];
+    return state.filtered.filter(p => albumKeyOf(p) === state.album);
+  }
+
+  function albumToast(msg, isErr) {
+    if (typeof APP !== 'undefined' && APP && typeof APP.toast === 'function') APP.toast(msg, isErr);
+  }
+
+  /* 只扫相册涉及的那些图片库（同一目录去重），其他目录不动；
+   * 没变化的文件走 stat 比对快路径，不会重建缩略图。 */
+  async function rescanAlbum() {
+    if (typeof APP === 'undefined' || typeof APP.rescan !== 'function') return;
+    const photos = albumPhotos();
+    if (!photos.length) { albumToast('这个相册里没有照片'); return; }
+    const dirIds = [...new Set(photos.map(p => p.dirId))];
+    for (const dirId of dirIds) await APP.rescan({ dirId });
+  }
+
+  function markAlbumGps() {
+    if (typeof MAPPICK === 'undefined' || typeof MAPPICK.openPhotos !== 'function') return;
+    const pending = albumPhotos().filter(p => !hasGps(p));
+    if (!pending.length) { albumToast('这个相册的照片都已经有位置信息'); return; }
+    MAPPICK.openPhotos(pending, '标记 GPS · ' + state.album);
+  }
+
+  /* 定位到相册里最新的一张，保证「在文件夹中显示」打开的是这批照片的目录 */
+  async function revealAlbumFirst() {
+    const list = sortedByDate(albumPhotos());
+    if (!list.length) { albumToast('这个相册里没有照片'); return; }
+    await revealPhoto(list[0]);
   }
 
   function renderAlbumDetail() {
@@ -580,7 +620,7 @@ const VIEWS = (() => {
 
   /* ---- 排序与日期 ---- */
   function sortedByDate(list) {
-    return [...list].sort((a, b) => (b.date || 0) - (a.date || 0));
+    return [...list].sort((a, b) => shotOf(b) - shotOf(a));
   }
 
   /* ---- 作品集排序：方式与算法对齐本机 FrameFlow ---- */
@@ -592,10 +632,10 @@ const VIEWS = (() => {
    * sensitivity:'base' 忽略大小写，与 FrameFlow 用的系统自然排序一致 */
   const collator = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' });
 
-  /* 拍摄时间：最新 / 最旧 / 新图优先一律以拍摄日期为准，不再看文件修改时间
+  /* 拍摄时间：最新 / 最旧 / 新图优先一律以拍摄日期为准，不看文件修改时间
    * （写回 GPS、复制、整理目录都会改 mtime，用它排序照片会乱跳）。
-   * 扫描时为没有 EXIF 日期的照片把 mtime 写进了 date 做兜底，
-   * 这类记录的 date 与 mtime 完全相同，这里识别出来当作「无拍摄日期」：0 表示未知。 */
+   * 扫描器现在只写 EXIF 日期；旧版索引给无日期照片拿 mtime 兜底过，
+   * 这类记录的 date 与 mtime 相同，这里识别出来当作「无拍摄日期」：0 表示未知。 */
   const shotOf = p => {
     const d = Number(p.date) || 0;
     const m = Number(p.mtime) || 0;
@@ -844,7 +884,8 @@ const VIEWS = (() => {
       p.iso ? EXIF.fmtIso(p.iso) : '',
     ].filter(Boolean).join(' · ');
     if (ex) parts.push(ex);
-    if (p.date) parts.push(fmtDate(p.date));
+    const shot = shotOf(p);
+    if (shot) parts.push(fmtDate(shot));
     if (p.width && p.height) parts.push(`<span class="exif-dim">${p.width}×${p.height}</span>`);
     if (!p.isRaw && assets && assets.useOriginal) parts.push('<span class="exif-dim">原图直出</span>');
     if (assets && assets.error === 'permission') parts.push('<span class="exif-dim">目录读不到</span>');
@@ -957,6 +998,9 @@ const VIEWS = (() => {
     $('#filter-camera').addEventListener('change', e => { state.filters.camera = e.target.value; applyFilters(); render(); });
     $('#filter-album').addEventListener('change', e => { state.filters.album = e.target.value; applyFilters(); render(); });
     $('#album-back').addEventListener('click', () => { state.album = null; renderAlbums(); });
+    $('#album-rescan').addEventListener('click', rescanAlbum);
+    $('#album-gps').addEventListener('click', markAlbumGps);
+    $('#album-reveal').addEventListener('click', revealAlbumFirst);
 
     // 作品集排序：点按钮开合菜单，点菜单项生效，点空白处或 Esc 收起
     const sortBtn = $('#sort-btn');

@@ -91,15 +91,27 @@ const GPSWRITE = (() => {
     }
     if (!r || r.ok === false) return { ok: false, error: (r && r.error) || '写入失败', noPath };
 
-    /* 索引里的坐标要跟着改，否则地图上还是看不到这些照片。
-     * exiftool 只回聚合数字、不区分具体哪一张失败，所以只要确实写成了，
-     * 就把这批记录整体标上坐标（与原编辑器行为一致）。 */
+    /* 索引里的坐标与扫描信息都要跟着改：坐标不更新地图上就看不到这些照片；
+     * size/mtime 不更新，下次增量扫描会把这一批全当成「文件已变化」重新解析、
+     * 重建缩略图（exiftool 写入一定会改变文件大小和修改时间）。 */
     const wrote = [];
     if ((r.updated || 0) > 0) {
       const lat = Number(coord.lat), lng = Number(coord.lng), at = Date.now();
       const overrides = [];
+      const statOf = new Map();
+      for (const s of (r.stats || [])) {
+        if (s && s.path) statOf.set(String(s.path), s);
+      }
       for (const p of kept) {
         p.gps = { lat, lng };
+        const st = statOf.get(absOf(p));
+        if (st) {
+          // 旧记录可能把「文件时间」当成了拍摄日期（date === 旧 mtime）；
+          // mtime 一改这种兜底就失去意义，直接清成未知，免得界面显示写入的今天。
+          if (p.date && Number(p.date) === Number(p.mtime)) p.date = null;
+          if (Number.isFinite(st.size)) p.size = st.size;
+          if (Number.isFinite(st.mtime)) p.mtime = st.mtime;
+        }
         overrides.push({ id: p.id, lat, lng, at });
         wrote.push(p);
         try { await DB.putPhoto(p); } catch (e) { /* 单条失败不影响其它 */ }

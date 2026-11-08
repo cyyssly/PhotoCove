@@ -759,7 +759,9 @@ function registerIpc() {
 
   /* ---- GPS 编辑：批量写入 ----
    * opts = { files: 绝对路径[], lat, lng, backup, exiftool? }
-   * 返回 { ok, updated, failed, total, errors[] }；进度通过 cove:gpsProgress 推送。 */
+   * 返回 { ok, updated, failed, total, errors[], stats[] }；进度通过 cove:gpsProgress 推送。
+   * stats 是写完之后每个文件的 size/mtime：exiftool 改写了文件，索引里的扫描信息必须
+   * 立刻跟着变，否则下次增量扫描会把这一批全当成「文件已变化」重新解析、重建缩略图。 */
   ipcMain.handle('cove:writeGps', async (event, opts) => {
     const o = opts || {};
     const exe = String(o.exiftool || '') || findExifTool();
@@ -836,7 +838,17 @@ function registerIpc() {
       } catch (e) { /* 窗口已关 */ }
     }
 
-    return { ok: true, updated, failed, total, backupFailed, errors: errors.slice(0, 8), coord };
+    /* 写入后的新 stat：渲染层据此更新索引记录里的 size/mtime。
+     * 取不到（文件刚被移走 / 占用）就跳过，那条记录保持原样，下次扫描自然会重算。 */
+    const stats = [];
+    for (const f of valid) {
+      try {
+        const st = await fsp.stat(toFsPath(f));
+        stats.push({ path: f, size: st.size, mtime: Math.round(st.mtimeMs) });
+      } catch (e) { /* ignore */ }
+    }
+
+    return { ok: true, updated, failed, total, backupFailed, errors: errors.slice(0, 8), coord, stats };
   });
 
   /* ---- 地名 → 坐标 ----
